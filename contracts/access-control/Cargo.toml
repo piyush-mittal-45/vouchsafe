@@ -13,3 +13,6 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+credential-vault = { path = "../credential-vault" }
+attestation-registry = { path = "../attestation-registry" }
+

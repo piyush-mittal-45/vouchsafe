@@ -203,7 +203,7 @@ impl AccessControl {
             // 2. Recompute leaf = sha256(name || value || salt)
             let mut leaf_bytes = Bytes::new(&env);
             use soroban_sdk::xdr::ToXdr;
-            let name_xdr = field.name.to_xdr(&env);
+            let name_xdr = field.name.clone().to_xdr(&env);
             leaf_bytes.append(&name_xdr);
             leaf_bytes.append(&field.value);
             let salt_bytes: Bytes = field.salt.into();
