@@ -258,3 +258,60 @@ export async function registerUserAsIssuer(userAddress: string) {
   }
   throw new Error("Issuer registration simulation failed");
 }
+
+export async function getLatestLedger(): Promise<number> {
+  const serverUrl = 'https://soroban-testnet.stellar.org';
+  const response = await fetch(serverUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getLatestLedger',
+      params: []
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error(`getLatestLedger RPC request failed: ${response.statusText}`);
+  }
+  const result = await response.json();
+  if (result.error) {
+    throw new Error(`getLatestLedger failed: ${JSON.stringify(result.error)}`);
+  }
+  return result.result?.sequence || 0;
+}
+
+export async function getContractEvents(
+  contractId: string,
+  startLedger: number
+): Promise<any[]> {
+  const serverUrl = 'https://soroban-testnet.stellar.org';
+  const response = await fetch(serverUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getEvents',
+      params: {
+        startLedger,
+        filters: [
+          {
+            type: 'contract',
+            contractIds: [contractId]
+          }
+        ]
+      }
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error(`getEvents RPC request failed: ${response.statusText}`);
+  }
+  const result = await response.json();
+  if (result.error) {
+    throw new Error(`getEvents failed: ${JSON.stringify(result.error)}`);
+  }
+  return result.result?.events || [];
+}

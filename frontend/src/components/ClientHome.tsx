@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Buffer } from 'buffer';
 import cryptoBrowser from 'crypto';
 import {
   StellarWalletsKit,
   Networks
 } from '@creit.tech/stellar-wallets-kit';
-import { nativeToScVal } from '@stellar/stellar-sdk';
+import { nativeToScVal, xdr, scValToNative } from '@stellar/stellar-sdk';
 import {
   REGISTRY_ID,
   VAULT_ID,
@@ -18,13 +18,23 @@ import {
   invokeReadOnly,
   registerUserAsIssuer,
   computeLeaf,
-  computeParent
+  computeParent,
+  getLatestLedger,
+  getContractEvents
 } from '../lib/soroban';
+import {
+  deriveKeyFromSignature,
+  storeEncryptedCredential,
+  getDecryptedCredential
+} from '../lib/storage';
 
 export default function ClientHome() {
   const [publicKey, setPublicKey] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.0');
   const [activeTab, setActiveTab] = useState<'subject' | 'verifier'>('subject');
+
+  // Encryption Key derived from signature
+  const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
 
   // Loading states
   const [loading, setLoading] = useState<boolean>(false);
@@ -46,6 +56,11 @@ export default function ClientHome() {
   const [credentials, setCredentials] = useState<any[]>([]);
   const [pendingRequests, setPendingRequests] = useState<any[]>([]);
   const [sentRequests, setSentRequests] = useState<any[]>([]);
+  
+  // Real-time activity feed driven by events
+  const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const lastPolledLedgerRef = useRef<number>(0);
+
   const [verifiedResult, setVerifiedResult] = useState<{
     show: boolean;
     valid: boolean;
@@ -55,14 +70,87 @@ export default function ClientHome() {
   // Initialize Stellar Wallet Kit on mount
   useEffect(() => {
     StellarWalletsKit.setNetwork(Networks.TESTNET);
+    
+    // Initialize starting ledger for events feed
+    getLatestLedger().then(seq => {
+      lastPolledLedgerRef.current = seq > 50 ? seq - 50 : 1; // start from recent ledgers
+    }).catch(err => {
+      console.error('Failed to get latest ledger:', err);
+    });
   }, []);
 
-  // Update balance when publicKey changes
+  // Update balance and derive key when publicKey changes
   useEffect(() => {
     if (publicKey) {
       updateData();
+      deriveEncryptionKeyFlow();
     }
   }, [publicKey]);
+
+  // Set up event polling interval (every 5 seconds)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (lastPolledLedgerRef.current === 0) return;
+      try {
+        const currentLedger = await getLatestLedger();
+        if (currentLedger > lastPolledLedgerRef.current) {
+          const events = await getContractEvents(ACCESS_ID, lastPolledLedgerRef.current);
+          if (events && events.length > 0) {
+            const parsedEvents = events.map(ev => {
+              try {
+                const parsedTopic = ev.topic.map((t: string) => scValToNative(xdr.ScVal.fromXDR(t, 'base64')));
+                if (parsedTopic[0] === 'disclosure') {
+                  return {
+                    id: ev.id,
+                    requestId: Number(parsedTopic[1]),
+                    verifier: parsedTopic[2],
+                    field: parsedTopic[3],
+                    timestamp: new Date(ev.ledgerClosedAt || Date.now()).toLocaleTimeString()
+                  };
+                }
+              } catch (e) {
+                console.error('Failed to parse event:', e);
+              }
+              return null;
+            }).filter(Boolean);
+            
+            if (parsedEvents.length > 0) {
+              setActivityFeed(prev => [...parsedEvents, ...prev].slice(0, 30)); // limit feed size
+            }
+          }
+          lastPolledLedgerRef.current = currentLedger;
+        }
+      } catch (err) {
+        console.error('Error polling events:', err);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const deriveEncryptionKeyFlow = async () => {
+    try {
+      setLoading(true);
+      setLoadingText('Requesting signature to derive secure local database key...');
+      
+      const challenge = 'Authorize VouchSafe local encrypted database access.';
+      const signRes = await StellarWalletsKit.signMessage(challenge);
+      
+      if (!signRes || !signRes.signedMessage) {
+        throw new Error('Wallet signature is required to open the vault.');
+      }
+      
+      const derivedKey = await deriveKeyFromSignature(signRes.signedMessage);
+      setEncryptionKey(derivedKey);
+      alert('Local database encryption key successfully established!');
+    } catch (err: any) {
+      console.error(err);
+      alert(`Vault key derivation failed: ${err.message || err}. You will not be able to issue or decrypt credentials.`);
+      disconnectWallet();
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const updateData = async () => {
     if (!publicKey) return;
@@ -93,6 +181,7 @@ export default function ClientHome() {
     setCredentials([]);
     setPendingRequests([]);
     setSentRequests([]);
+    setEncryptionKey(null);
   };
 
   // Load Credentials owned by the user
@@ -176,6 +265,10 @@ export default function ClientHome() {
   // Issuer flow (demo register self + issue)
   const issueCredentialFlow = async () => {
     if (!publicKey) return;
+    if (!encryptionKey) {
+      alert('Vault encryption key not established. Please reconnect your wallet to establish it.');
+      return;
+    }
     try {
       setLoading(true);
       setLoadingText('Checking Issuer Authorization...');
@@ -235,7 +328,11 @@ export default function ClientHome() {
       const signedIssueXdr = await StellarWalletsKit.signTransaction(issueXdr);
       await submitTransaction(signedIssueXdr.signedTxXdr);
 
-      const attestationId = 1;
+      // Determine next credential ID dynamically
+      const nextCredId = credentials.length + 1;
+
+      setLoadingText('Encrypting raw credential data and storing in IndexedDB...');
+      await storeEncryptedCredential(nextCredId, credData, encryptionKey);
 
       setLoadingText('Submitting store_credential to Vault...');
       const storeXdr = await buildTransaction(
@@ -244,17 +341,15 @@ export default function ClientHome() {
         'store_credential',
         [
           { value: publicKey, type: 'address' },
-          nativeToScVal(attestationId, { type: 'u64' }),
-          nativeToScVal('ipfs_hash_demo', { type: 'symbol' }),
+          nativeToScVal(1, { type: 'u64' }), // Reference registry attestation ID 1
+          nativeToScVal(nextCredId.toString(), { type: 'symbol' }), // On-chain pointer is only the ID reference
           nativeToScVal(['full_name', 'date_of_birth', 'license_class'])
         ]
       );
       const signedStoreXdr = await StellarWalletsKit.signTransaction(storeXdr);
       await submitTransaction(signedStoreXdr.signedTxXdr);
 
-      localStorage.setItem(`cred_data_1`, JSON.stringify(credData));
-
-      alert('Credential issued and stored successfully!');
+      alert('Credential successfully encrypted, stored in IndexedDB, and metadata registered in the vault!');
       await updateData();
     } catch (err: any) {
       console.error(err);
@@ -298,41 +393,44 @@ export default function ClientHome() {
     }
   };
 
-  // Subject: Grant Request
+  // Subject: Grant Request (Decrypt and disclose proofs)
   const grantAccess = async (request: any) => {
     if (!publicKey) return;
+    if (!encryptionKey) {
+      alert('Vault encryption key not established.');
+      return;
+    }
     try {
       setLoading(true);
-      setLoadingText('Building Selective Disclosure Proof...');
+      setLoadingText('Retrieving and decrypting raw credential from IndexedDB...');
       
-      const savedDataStr = localStorage.getItem(`cred_data_${request.credentialId}`);
-      if (!savedDataStr) {
-        throw new Error('Credential off-chain values not found in local cache.');
+      const decrypted = await getDecryptedCredential(request.credentialId, encryptionKey);
+      if (!decrypted) {
+        throw new Error('Credential not found in secure local IndexedDB database.');
       }
-      const raw = JSON.parse(savedDataStr);
 
       const disclosedList = [];
       for (const field of request.requestedFields) {
         if (field === 'full_name') {
           disclosedList.push({
             name: 'full_name',
-            value: Buffer.from(raw.fullName, 'utf8').toString('hex'),
-            salt: raw.salt0,
-            proof: [raw.leaf1, raw.parent1]
+            value: Buffer.from(decrypted.fullName, 'utf8').toString('hex'),
+            salt: decrypted.salt0,
+            proof: [decrypted.leaf1, decrypted.parent1]
           });
         } else if (field === 'date_of_birth') {
           disclosedList.push({
             name: 'date_of_birth',
-            value: Buffer.from(raw.dob, 'utf8').toString('hex'),
-            salt: raw.salt1,
-            proof: [raw.leaf0, raw.parent1]
+            value: Buffer.from(decrypted.dob, 'utf8').toString('hex'),
+            salt: decrypted.salt1,
+            proof: [decrypted.leaf0, decrypted.parent1]
           });
         } else if (field === 'license_class') {
           disclosedList.push({
             name: 'license_class',
-            value: Buffer.from(raw.licenseClass, 'utf8').toString('hex'),
-            salt: raw.salt2,
-            proof: [raw.leaf2, raw.parent0]
+            value: Buffer.from(decrypted.licenseClass, 'utf8').toString('hex'),
+            salt: decrypted.salt2,
+            proof: [decrypted.leaf2, decrypted.parent0]
           });
         }
       }
@@ -353,7 +451,7 @@ export default function ClientHome() {
       );
       const signed = await StellarWalletsKit.signTransaction(xdrString);
       await submitTransaction(signed.signedTxXdr);
-      alert('Access granted successfully!');
+      alert('Access granted and selective disclosure payload securely prepared!');
       await updateData();
     } catch (err: any) {
       console.error(err);
@@ -452,6 +550,40 @@ export default function ClientHome() {
           </div>
         </header>
 
+        {/* Live Disclosure Activity Ticker (Centerpiece Hero Element) */}
+        <section className="mb-10 bg-[#FAF7F2] border-2 border-[#C59B27] p-6 shadow-md relative overflow-hidden">
+          <div className="absolute top-0 right-0 h-full w-3 bg-[#C59B27]"></div>
+          <div className="flex items-center space-x-3 mb-4">
+            <span className="relative flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            </span>
+            <h2 className="text-lg font-serif font-black uppercase text-[#1E293B] tracking-wider">
+              Live Disclosure Ticker
+            </h2>
+          </div>
+          <div className="max-h-36 overflow-y-auto space-y-3 font-mono text-xs text-[#64748B]">
+            {activityFeed.length === 0 ? (
+              <div className="italic text-gray-400">Waiting for on-chain selective disclosures...</div>
+            ) : (
+              activityFeed.map((event, idx) => (
+                <div
+                  key={event.id + idx}
+                  className="border-b border-[#E2E8F0] pb-2 flex justify-between items-start animate-fade-in"
+                >
+                  <div>
+                    <span className="text-green-700 font-bold">🟢 DISCLOSURE:</span>{' '}
+                    Verifier <span className="text-gray-900 font-semibold">{event.verifier.slice(0, 8)}...{event.verifier.slice(-8)}</span> verified field{' '}
+                    <span className="text-[#851C1C] font-bold">"{event.field}"</span> on Request{' '}
+                    <span className="font-bold text-gray-900">#{event.requestId}</span>
+                  </div>
+                  <div className="text-gray-400 text-[10px] pl-4">{event.timestamp}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         <div className="flex space-x-4 border-b border-[#E2E8F0] mb-8">
           <button
             onClick={() => setActiveTab('subject')}
@@ -504,7 +636,7 @@ export default function ClientHome() {
                           {cred.attestationId}
                         </div>
                         <div>
-                          <span className="font-bold text-[#1E293B]">IPFS Pointer:</span> {cred.pointer}
+                          <span className="font-bold text-[#1E293B]">IPFS/IndexedDB ID Reference:</span> {cred.pointer}
                         </div>
                         <div>
                           <span className="font-bold text-[#1E293B]">Fields:</span>{' '}
@@ -531,7 +663,7 @@ export default function ClientHome() {
 
             <section className="mb-12 border border-[#E2E8F0] p-6 bg-[#FAF9F5]">
               <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif">
-                Issue Demo Passport Credential
+                Issue Encrypted Passport Credential
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
                 <div>
@@ -570,14 +702,14 @@ export default function ClientHome() {
               </div>
               <button
                 onClick={issueCredentialFlow}
-                disabled={!publicKey}
+                disabled={!publicKey || !encryptionKey}
                 className="bg-[#1E293B] hover:bg-[#0F172A] disabled:bg-gray-400 text-white font-serif font-bold px-8 py-3 border-2 border-[#1E293B] transition shadow-md"
               >
-                Issue and Store Credential
+                Issue, Encrypt & Store
               </button>
-              {!publicKey && (
+              {(!publicKey || !encryptionKey) && (
                 <p className="text-xs text-[#851C1C] mt-2 font-semibold">
-                  * Connect wallet to register as issuer & subject and mint credential.
+                  * Connect wallet to derive key and mint credential.
                 </p>
               )}
             </section>
