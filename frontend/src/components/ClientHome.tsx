@@ -1,4 +1,5 @@
 'use client';
+// Mobile responsive client portal interface for VouchSafe SSI.
 
 import { useState, useEffect, useRef } from 'react';
 import { Buffer } from 'buffer';
