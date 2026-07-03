@@ -40,6 +40,14 @@ export default function ClientHome() {
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingText, setLoadingText] = useState<string>('');
 
+  // 3 Error states
+  const [errorState, setErrorState] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    type: 'wallet_missing' | 'rejected' | 'insufficient_fee' | 'other';
+  } | null>(null);
+
   // Form states - Issuance
   const [fullName, setFullName] = useState<string>('Alice Smith');
   const [dob, setDob] = useState<string>('1990-01-01');
@@ -65,15 +73,15 @@ export default function ClientHome() {
     show: boolean;
     valid: boolean;
     txHash?: string;
+    details?: string;
   } | null>(null);
 
   // Initialize Stellar Wallet Kit on mount
   useEffect(() => {
     StellarWalletsKit.setNetwork(Networks.TESTNET);
     
-    // Initialize starting ledger for events feed
     getLatestLedger().then(seq => {
-      lastPolledLedgerRef.current = seq > 50 ? seq - 50 : 1; // start from recent ledgers
+      lastPolledLedgerRef.current = seq > 50 ? seq - 50 : 1;
     }).catch(err => {
       console.error('Failed to get latest ledger:', err);
     });
@@ -87,7 +95,7 @@ export default function ClientHome() {
     }
   }, [publicKey]);
 
-  // Set up event polling interval (every 5 seconds)
+  // Event polling interval (every 5 seconds)
   useEffect(() => {
     const interval = setInterval(async () => {
       if (lastPolledLedgerRef.current === 0) return;
@@ -115,7 +123,7 @@ export default function ClientHome() {
             }).filter(Boolean);
             
             if (parsedEvents.length > 0) {
-              setActivityFeed(prev => [...parsedEvents, ...prev].slice(0, 30)); // limit feed size
+              setActivityFeed(prev => [...parsedEvents, ...prev].slice(0, 30));
             }
           }
           lastPolledLedgerRef.current = currentLedger;
@@ -128,10 +136,58 @@ export default function ClientHome() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleException = (err: any) => {
+    console.error("Handled exception:", err);
+    
+    // 1. Check if wallet missing
+    const isWalletInstalled = typeof window !== 'undefined' && (window as any).stellarWallet;
+    
+    // 2. Check if user rejected signature
+    const errMsg = err?.message || JSON.stringify(err) || "";
+    const isRejected = errMsg.toLowerCase().includes('cancel') || 
+                       errMsg.toLowerCase().includes('reject') || 
+                       errMsg.toLowerCase().includes('user close') || 
+                       err.code === -1;
+
+    // 3. Check if insufficient balance (minimum 2.0 XLM for fees)
+    const xlm = parseFloat(balance);
+    const isInsufficient = xlm < 2.0;
+
+    if (!isWalletInstalled) {
+      setErrorState({
+        show: true,
+        title: "Freighter Wallet Missing",
+        message: "No compatible wallet found. Please install the Freighter browser extension to securely manage identities.",
+        type: "wallet_missing"
+      });
+    } else if (isInsufficient && publicKey) {
+      setErrorState({
+        show: true,
+        title: "Insufficient XLM Balance",
+        message: `Your balance is ${balance} XLM. A minimum of 2.0 XLM is required on Testnet to cover network fees. Please fund your address at: G...${publicKey.slice(-6)}`,
+        type: "insufficient_fee"
+      });
+    } else if (isRejected) {
+      setErrorState({
+        show: true,
+        title: "Signature Request Rejected",
+        message: "The signature challenge was declined by the user. The action has been aborted securely.",
+        type: "rejected"
+      });
+    } else {
+      setErrorState({
+        show: true,
+        title: "Blockchain RPC Error",
+        message: errMsg || "The testnet node took too long to respond. Please try again in a few moments.",
+        type: "other"
+      });
+    }
+  };
+
   const deriveEncryptionKeyFlow = async () => {
     try {
       setLoading(true);
-      setLoadingText('Requesting signature to derive secure local database key...');
+      setLoadingText('Step 1/2: Requesting signature to derive secure local database key...');
       
       const challenge = 'Authorize VouchSafe local encrypted database access.';
       const signRes = await StellarWalletsKit.signMessage(challenge);
@@ -140,12 +196,11 @@ export default function ClientHome() {
         throw new Error('Wallet signature is required to open the vault.');
       }
       
+      setLoadingText('Step 2/2: Deriving AES key and opening vault...');
       const derivedKey = await deriveKeyFromSignature(signRes.signedMessage);
       setEncryptionKey(derivedKey);
-      alert('Local database encryption key successfully established!');
     } catch (err: any) {
-      console.error(err);
-      alert(`Vault key derivation failed: ${err.message || err}. You will not be able to issue or decrypt credentials.`);
+      handleException(err);
       disconnectWallet();
     } finally {
       setLoading(false);
@@ -154,28 +209,40 @@ export default function ClientHome() {
 
   const updateData = async () => {
     if (!publicKey) return;
-    const bal = await getXlmBalance(publicKey);
-    setBalance(bal);
-    await loadCredentials();
-    await loadRequests();
+    try {
+      const bal = await getXlmBalance(publicKey);
+      setBalance(bal);
+      await loadCredentials();
+      await loadRequests();
+    } catch (err) {
+      handleException(err);
+    }
   };
 
   const connectWallet = async () => {
+    // Check if wallet installed first
+    const isWalletInstalled = typeof window !== 'undefined' && (window as any).stellarWallet;
+    if (!isWalletInstalled) {
+      handleException(new Error('Wallet not installed'));
+      return;
+    }
+    
     try {
       setLoading(true);
-      setLoadingText('Connecting Wallet...');
+      setLoadingText('Connecting wallet...');
       const { address } = await StellarWalletsKit.authModal();
       setPublicKey(address);
     } catch (err) {
-      console.error(err);
-      alert('Failed to connect wallet');
+      handleException(err);
     } finally {
       setLoading(false);
     }
   };
 
   const disconnectWallet = async () => {
-    await StellarWalletsKit.disconnect();
+    try {
+      await StellarWalletsKit.disconnect();
+    } catch (e) {}
     setPublicKey('');
     setBalance('0.0');
     setCredentials([]);
@@ -219,7 +286,7 @@ export default function ClientHome() {
       }
       setCredentials(list);
     } catch (err) {
-      console.error("Failed to load credentials:", err);
+      console.error(err);
     }
   };
 
@@ -266,24 +333,23 @@ export default function ClientHome() {
   const issueCredentialFlow = async () => {
     if (!publicKey) return;
     if (!encryptionKey) {
-      alert('Vault encryption key not established. Please reconnect your wallet to establish it.');
+      alert('Vault encryption key not established.');
       return;
     }
     try {
       setLoading(true);
-      setLoadingText('Checking Issuer Authorization...');
+      setLoadingText('Step 1/4: Checking issuer authorization...');
       
       const isRegistered = await invokeReadOnly(REGISTRY_ID, 'is_issuer', [
         { value: publicKey, type: 'address' }
       ]);
 
       if (!isRegistered) {
-        setLoadingText('Registering wallet as Trusted Issuer (using Admin)...');
+        setLoadingText('Step 2/4: Registering wallet as Trusted Issuer (using Admin)...');
         await registerUserAsIssuer(publicKey);
-        alert('Registered Freighter Wallet as an Issuer successfully on Testnet!');
       }
 
-      setLoadingText('Computing Merkle Tree and Proofs...');
+      setLoadingText('Step 3/4: Computing Merkle root and local proofs...');
       const salt0 = Buffer.from(cryptoBrowser.randomBytes(32));
       const salt1 = Buffer.from(cryptoBrowser.randomBytes(32));
       const salt2 = Buffer.from(cryptoBrowser.randomBytes(32));
@@ -311,7 +377,7 @@ export default function ClientHome() {
         root: root.toString('hex')
       };
 
-      setLoadingText('Submitting issue_attestation to Testnet...');
+      setLoadingText('Step 4/4: Submitting issue_attestation and store_credential...');
       const issueXdr = await buildTransaction(
         publicKey,
         REGISTRY_ID,
@@ -328,32 +394,27 @@ export default function ClientHome() {
       const signedIssueXdr = await StellarWalletsKit.signTransaction(issueXdr);
       await submitTransaction(signedIssueXdr.signedTxXdr);
 
-      // Determine next credential ID dynamically
       const nextCredId = credentials.length + 1;
-
-      setLoadingText('Encrypting raw credential data and storing in IndexedDB...');
       await storeEncryptedCredential(nextCredId, credData, encryptionKey);
 
-      setLoadingText('Submitting store_credential to Vault...');
       const storeXdr = await buildTransaction(
         publicKey,
         VAULT_ID,
         'store_credential',
         [
           { value: publicKey, type: 'address' },
-          nativeToScVal(1, { type: 'u64' }), // Reference registry attestation ID 1
-          nativeToScVal(nextCredId.toString(), { type: 'symbol' }), // On-chain pointer is only the ID reference
+          nativeToScVal(1, { type: 'u64' }), // static counter id
+          nativeToScVal(nextCredId.toString(), { type: 'symbol' }),
           nativeToScVal(['full_name', 'date_of_birth', 'license_class'])
         ]
       );
       const signedStoreXdr = await StellarWalletsKit.signTransaction(storeXdr);
       await submitTransaction(signedStoreXdr.signedTxXdr);
 
-      alert('Credential successfully encrypted, stored in IndexedDB, and metadata registered in the vault!');
+      alert('Credential successfully encrypted, stored locally in IndexedDB, and metadata registered on-chain!');
       await updateData();
     } catch (err: any) {
-      console.error(err);
-      alert(`Issuance failed: ${err.message}`);
+      handleException(err);
     } finally {
       setLoading(false);
     }
@@ -364,7 +425,7 @@ export default function ClientHome() {
     if (!publicKey) return;
     try {
       setLoading(true);
-      setLoadingText('Submitting request_proof transaction...');
+      setLoadingText('Step 1/2: Preparing request_proof transaction...');
       const requested = [];
       if (reqFullName) requested.push('full_name');
       if (reqDob) requested.push('date_of_birth');
@@ -381,19 +442,20 @@ export default function ClientHome() {
           nativeToScVal(requested)
         ]
       );
+      
+      setLoadingText('Step 2/2: Submitting transaction to Testnet...');
       const signed = await StellarWalletsKit.signTransaction(xdrString);
       await submitTransaction(signed.signedTxXdr);
       alert('Access request submitted successfully!');
       await updateData();
     } catch (err: any) {
-      console.error(err);
-      alert(`Request failed: ${err.message}`);
+      handleException(err);
     } finally {
       setLoading(false);
     }
   };
 
-  // Subject: Grant Request (Decrypt and disclose proofs)
+  // Subject: Grant Request
   const grantAccess = async (request: any) => {
     if (!publicKey) return;
     if (!encryptionKey) {
@@ -402,13 +464,14 @@ export default function ClientHome() {
     }
     try {
       setLoading(true);
-      setLoadingText('Retrieving and decrypting raw credential from IndexedDB...');
+      setLoadingText('Step 1/3: Decrypting local database values...');
       
       const decrypted = await getDecryptedCredential(request.credentialId, encryptionKey);
       if (!decrypted) {
         throw new Error('Credential not found in secure local IndexedDB database.');
       }
 
+      setLoadingText('Step 2/3: Constructing selective disclosure proofs...');
       const disclosedList = [];
       for (const field of request.requestedFields) {
         if (field === 'full_name') {
@@ -437,7 +500,7 @@ export default function ClientHome() {
 
       localStorage.setItem(`disclosures_${request.id}`, JSON.stringify(disclosedList));
 
-      setLoadingText('Submitting grant_access transaction...');
+      setLoadingText('Step 3/3: Submitting grant_access transaction...');
       const expiry = Math.floor(Date.now() / 1000) + 3600; // 1 hour
       const xdrString = await buildTransaction(
         publicKey,
@@ -454,8 +517,7 @@ export default function ClientHome() {
       alert('Access granted and selective disclosure payload securely prepared!');
       await updateData();
     } catch (err: any) {
-      console.error(err);
-      alert(`Grant failed: ${err.message}`);
+      handleException(err);
     } finally {
       setLoading(false);
     }
@@ -466,7 +528,7 @@ export default function ClientHome() {
     if (!publicKey) return;
     try {
       setLoading(true);
-      setLoadingText('Loading selective disclosure payload...');
+      setLoadingText('Step 1/2: Decrypting selective disclosure payload...');
       
       const savedDisclosures = localStorage.getItem(`disclosures_${request.id}`);
       if (!savedDisclosures) {
@@ -488,7 +550,18 @@ export default function ClientHome() {
         proof: d.proof.map((p: string) => Buffer.from(p, 'hex'))
       }));
 
-      setLoadingText('Invoking verify_disclosure on-chain...');
+      // Check for expiration
+      const now = Math.floor(Date.now() / 1000);
+      if (now > request.expiry) {
+        setVerifiedResult({
+          show: true,
+          valid: false,
+          details: 'EXPIRED / REVOKED'
+        });
+        return;
+      }
+
+      setLoadingText('Step 2/2: Verifying Merkle paths on-chain...');
       const isValid = await invokeReadOnly(ACCESS_ID, 'verify_disclosure', [
         nativeToScVal(request.id, { type: 'u64' }),
         nativeToScVal(disclosedParams)
@@ -497,46 +570,45 @@ export default function ClientHome() {
       setVerifiedResult({
         show: true,
         valid: isValid,
-        txHash: 'On-chain verification complete'
+        details: isValid ? 'VERIFIED SUCCESS' : 'VERIFICATION FAILED'
       });
     } catch (err: any) {
-      console.error(err);
-      alert(`Verification failed: ${err.message}`);
+      handleException(err);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-[#FDFBF7] py-12 px-6 flex flex-col items-center">
-      <div className="w-full max-w-5xl border-4 border-[#1E293B] bg-[#FFFDF9] p-8 md:p-12 shadow-2xl relative">
-        <div className="absolute top-4 right-4 md:top-8 md:right-8 w-16 h-16 rounded-full border-4 border-[#851C1C] flex items-center justify-center font-serif text-[#851C1C] text-xs font-bold rotate-12 opacity-80">
+    <main className="min-h-screen bg-[#FDFBF7] py-6 px-4 sm:py-12 sm:px-6 flex flex-col items-center">
+      <div className="w-full max-w-5xl border-4 border-[#1E293B] bg-[#FFFDF9] p-4 sm:p-8 md:p-12 shadow-2xl relative">
+        <div className="absolute top-4 right-4 w-12 h-12 sm:w-16 sm:h-16 rounded-full border-4 border-[#851C1C] flex items-center justify-center font-serif text-[#851C1C] text-[10px] sm:text-xs font-bold rotate-12 opacity-80">
           VOUCHSAFE
         </div>
 
-        <header className="border-b-2 border-[#1E293B] pb-6 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end">
+        <header className="border-b-2 border-[#1E293B] pb-6 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end space-y-4 md:space-y-0">
           <div>
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight text-[#1E293B] font-serif">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-[#1E293B] font-serif">
               VOUCHSAFE
             </h1>
-            <p className="text-sm font-sans tracking-wide text-[#64748B] mt-2 uppercase font-semibold">
+            <p className="text-[10px] sm:text-xs md:text-sm font-sans tracking-wide text-[#64748B] mt-2 uppercase font-semibold">
               Self-Sovereign Identity Attestation Vault
             </p>
           </div>
 
-          <div className="mt-4 md:mt-0 flex flex-col items-end">
+          <div className="flex flex-col items-start md:items-end w-full md:w-auto">
             {!publicKey ? (
               <button
                 onClick={connectWallet}
-                className="bg-[#851C1C] hover:bg-[#991B1B] text-[#FFFDF9] font-serif font-semibold px-6 py-2 border-2 border-[#851C1C] transition duration-200 shadow-md"
+                className="w-full md:w-auto bg-[#851C1C] hover:bg-[#991B1B] text-[#FFFDF9] font-serif font-semibold px-6 py-2 border-2 border-[#851C1C] transition duration-200 shadow-md text-sm sm:text-base"
               >
                 Connect Wallet
               </button>
             ) : (
-              <div className="flex flex-col items-end">
-                <span className="text-xs font-semibold text-[#64748B]">WALLET</span>
-                <span className="text-sm font-mono font-bold text-[#1E293B]">
-                  {publicKey.slice(0, 6)}...{publicKey.slice(-6)}
+              <div className="flex flex-col items-start md:items-end w-full">
+                <span className="text-[10px] font-semibold text-[#64748B]">WALLET</span>
+                <span className="text-xs sm:text-sm font-mono font-bold text-[#1E293B] break-all">
+                  {publicKey}
                 </span>
                 <span className="text-xs font-bold text-[#C59B27] mt-1">{balance} XLM</span>
                 <button
@@ -551,43 +623,44 @@ export default function ClientHome() {
         </header>
 
         {/* Live Disclosure Activity Ticker (Centerpiece Hero Element) */}
-        <section className="mb-10 bg-[#FAF7F2] border-2 border-[#C59B27] p-6 shadow-md relative overflow-hidden">
+        <section className="mb-10 bg-[#FAF7F2] border-2 border-[#C59B27] p-4 sm:p-6 shadow-md relative overflow-hidden">
           <div className="absolute top-0 right-0 h-full w-3 bg-[#C59B27]"></div>
           <div className="flex items-center space-x-3 mb-4">
             <span className="relative flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
             </span>
-            <h2 className="text-lg font-serif font-black uppercase text-[#1E293B] tracking-wider">
+            <h2 className="text-base sm:text-lg font-serif font-black uppercase text-[#1E293B] tracking-wider">
               Live Disclosure Ticker
             </h2>
           </div>
-          <div className="max-h-36 overflow-y-auto space-y-3 font-mono text-xs text-[#64748B]">
+          <div className="max-h-36 overflow-y-auto space-y-3 font-mono text-[10px] sm:text-xs text-[#64748B]">
             {activityFeed.length === 0 ? (
               <div className="italic text-gray-400">Waiting for on-chain selective disclosures...</div>
             ) : (
               activityFeed.map((event, idx) => (
                 <div
                   key={event.id + idx}
-                  className="border-b border-[#E2E8F0] pb-2 flex justify-between items-start animate-fade-in"
+                  className="border-b border-[#E2E8F0] pb-2 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-1 sm:space-y-0"
                 >
-                  <div>
+                  <div className="break-all sm:break-normal">
                     <span className="text-green-700 font-bold">🟢 DISCLOSURE:</span>{' '}
                     Verifier <span className="text-gray-900 font-semibold">{event.verifier.slice(0, 8)}...{event.verifier.slice(-8)}</span> verified field{' '}
                     <span className="text-[#851C1C] font-bold">"{event.field}"</span> on Request{' '}
                     <span className="font-bold text-gray-900">#{event.requestId}</span>
                   </div>
-                  <div className="text-gray-400 text-[10px] pl-4">{event.timestamp}</div>
+                  <div className="text-gray-400 text-[9px] sm:text-[10px]">{event.timestamp}</div>
                 </div>
               ))
             )}
           </div>
         </section>
 
+        {/* Tab Navigation */}
         <div className="flex space-x-4 border-b border-[#E2E8F0] mb-8">
           <button
             onClick={() => setActiveTab('subject')}
-            className={`pb-3 font-serif font-bold text-lg border-b-2 transition ${
+            className={`pb-3 font-serif font-bold text-base sm:text-lg border-b-2 transition ${
               activeTab === 'subject'
                 ? 'border-[#851C1C] text-[#851C1C]'
                 : 'border-transparent text-[#64748B] hover:text-[#1E293B]'
@@ -597,7 +670,7 @@ export default function ClientHome() {
           </button>
           <button
             onClick={() => setActiveTab('verifier')}
-            className={`pb-3 font-serif font-bold text-lg border-b-2 transition ${
+            className={`pb-3 font-serif font-bold text-base sm:text-lg border-b-2 transition ${
               activeTab === 'verifier'
                 ? 'border-[#851C1C] text-[#851C1C]'
                 : 'border-transparent text-[#64748B] hover:text-[#1E293B]'
@@ -607,14 +680,15 @@ export default function ClientHome() {
           </button>
         </div>
 
+        {/* Tab Content */}
         {activeTab === 'subject' ? (
           <div>
             <section className="mb-12">
-              <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
                 Stored Credentials
               </h2>
               {credentials.length === 0 ? (
-                <div className="border border-dashed border-[#64748B] rounded-lg p-8 text-center text-[#64748B]">
+                <div className="border border-dashed border-[#64748B] rounded-lg p-6 sm:p-8 text-center text-sm text-[#64748B]">
                   No credentials registered. Complete the issuance demo below to issue your first credential!
                 </div>
               ) : (
@@ -622,21 +696,21 @@ export default function ClientHome() {
                   {credentials.map((cred) => (
                     <div
                       key={cred.id}
-                      className="border border-[#1E293B] p-6 bg-[#FFFDFB] shadow-sm relative overflow-hidden"
+                      className="border border-[#1E293B] p-4 sm:p-6 bg-[#FFFDFB] shadow-sm relative overflow-hidden"
                     >
-                      <div className="absolute top-0 right-0 px-3 py-1 text-xs font-bold uppercase tracking-wider text-[#FFFDF9] bg-[#C59B27]">
+                      <div className="absolute top-0 right-0 px-3 py-1 text-[10px] sm:text-xs font-bold uppercase tracking-wider text-[#FFFDF9] bg-[#C59B27]">
                         ID: {cred.id}
                       </div>
-                      <h3 className="font-serif font-bold text-xl text-[#1E293B] mt-2 capitalize">
+                      <h3 className="font-serif font-bold text-lg sm:text-xl text-[#1E293B] mt-2 capitalize">
                         Passport Credential
                       </h3>
-                      <div className="mt-4 space-y-2 text-sm text-[#64748B]">
+                      <div className="mt-4 space-y-2 text-xs sm:text-sm text-[#64748B]">
                         <div>
                           <span className="font-bold text-[#1E293B]">Registry Attestation:</span>{' '}
                           {cred.attestationId}
                         </div>
-                        <div>
-                          <span className="font-bold text-[#1E293B]">IPFS/IndexedDB ID Reference:</span> {cred.pointer}
+                        <div className="break-all">
+                          <span className="font-bold text-[#1E293B]">DB Reference:</span> {cred.pointer}
                         </div>
                         <div>
                           <span className="font-bold text-[#1E293B]">Fields:</span>{' '}
@@ -645,7 +719,7 @@ export default function ClientHome() {
                         <div className="flex items-center space-x-2 mt-4">
                           <span className="font-bold text-[#1E293B]">Status:</span>
                           <span
-                            className={`px-2 py-0.5 text-xs font-bold rounded-full ${
+                            className={`px-2 py-0.5 text-[10px] sm:text-xs font-bold rounded-full ${
                               cred.isValid
                                 ? 'bg-green-100 text-green-800'
                                 : 'bg-red-100 text-red-800'
@@ -661,65 +735,65 @@ export default function ClientHome() {
               )}
             </section>
 
-            <section className="mb-12 border border-[#E2E8F0] p-6 bg-[#FAF9F5]">
-              <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif">
+            <section className="mb-12 border border-[#E2E8F0] p-4 sm:p-6 bg-[#FAF9F5]">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1E293B] mb-6 font-serif">
                 Issue Encrypted Passport Credential
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-6">
                 <div>
-                  <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                     Full Name
                   </label>
                   <input
                     type="text"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    className="w-full border border-[#64748B] bg-white p-2.5 text-[#1E293B] focus:outline-none"
+                    className="w-full border border-[#64748B] bg-white p-2.5 text-xs sm:text-sm text-[#1E293B] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                     Date of Birth
                   </label>
                   <input
                     type="text"
                     value={dob}
                     onChange={(e) => setDob(e.target.value)}
-                    className="w-full border border-[#64748B] bg-white p-2.5 text-[#1E293B] focus:outline-none"
+                    className="w-full border border-[#64748B] bg-white p-2.5 text-xs sm:text-sm text-[#1E293B] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                     License Class
                   </label>
                   <input
                     type="text"
                     value={licenseClass}
                     onChange={(e) => setLicenseClass(e.target.value)}
-                    className="w-full border border-[#64748B] bg-white p-2.5 text-[#1E293B] focus:outline-none"
+                    className="w-full border border-[#64748B] bg-white p-2.5 text-xs sm:text-sm text-[#1E293B] focus:outline-none"
                   />
                 </div>
               </div>
               <button
                 onClick={issueCredentialFlow}
                 disabled={!publicKey || !encryptionKey}
-                className="bg-[#1E293B] hover:bg-[#0F172A] disabled:bg-gray-400 text-white font-serif font-bold px-8 py-3 border-2 border-[#1E293B] transition shadow-md"
+                className="w-full sm:w-auto bg-[#1E293B] hover:bg-[#0F172A] disabled:bg-gray-400 text-white font-serif font-bold px-8 py-3 border-2 border-[#1E293B] transition shadow-md text-sm sm:text-base"
               >
                 Issue, Encrypt & Store
               </button>
               {(!publicKey || !encryptionKey) && (
-                <p className="text-xs text-[#851C1C] mt-2 font-semibold">
+                <p className="text-[10px] sm:text-xs text-[#851C1C] mt-2 font-semibold">
                   * Connect wallet to derive key and mint credential.
                 </p>
               )}
             </section>
 
             <section className="mb-12">
-              <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
                 Pending Access Requests
               </h2>
               {pendingRequests.length === 0 ? (
-                <div className="border border-dashed border-[#64748B] rounded-lg p-8 text-center text-[#64748B]">
+                <div className="border border-dashed border-[#64748B] rounded-lg p-6 sm:p-8 text-center text-sm text-[#64748B]">
                   No pending access requests.
                 </div>
               ) : (
@@ -727,28 +801,28 @@ export default function ClientHome() {
                   {pendingRequests.map((req) => (
                     <div
                       key={req.id}
-                      className="border border-[#1E293B] p-6 bg-[#FFFDFB] shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center"
+                      className="border border-[#1E293B] p-4 sm:p-6 bg-[#FFFDFB] shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0"
                     >
                       <div>
-                        <div className="text-xs font-bold text-[#C59B27] uppercase">
+                        <div className="text-[10px] sm:text-xs font-bold text-[#C59B27] uppercase">
                           Request ID: {req.id}
                         </div>
-                        <div className="font-serif font-bold text-lg text-[#1E293B] mt-1">
-                          Verifier: {req.verifier.slice(0, 8)}...{req.verifier.slice(-8)}
+                        <div className="font-serif font-bold text-base sm:text-lg text-[#1E293B] mt-1 break-all">
+                          Verifier: {req.verifier}
                         </div>
-                        <div className="text-sm text-[#64748B] mt-2">
+                        <div className="text-xs sm:text-sm text-[#64748B] mt-2">
                           Requested fields: {req.requestedFields.join(', ')}
                         </div>
-                        <div className="text-xs font-bold text-[#851C1C] mt-2 uppercase">
+                        <div className="text-[10px] sm:text-xs font-bold text-[#851C1C] mt-2 uppercase">
                           Status: {req.status}
                         </div>
                       </div>
 
                       {req.status === 'pending' && (
-                        <div className="mt-4 md:mt-0">
+                        <div className="w-full md:w-auto">
                           <button
                             onClick={() => grantAccess(req)}
-                            className="bg-[#851C1C] hover:bg-[#991B1B] text-white font-serif font-bold px-6 py-2.5 transition shadow-sm border border-[#851C1C]"
+                            className="w-full md:w-auto bg-[#851C1C] hover:bg-[#991B1B] text-white font-serif font-bold px-6 py-2.5 transition shadow-sm border border-[#851C1C] text-sm"
                           >
                             Approve & Disclose
                           </button>
@@ -762,13 +836,13 @@ export default function ClientHome() {
           </div>
         ) : (
           <div>
-            <section className="mb-12 border border-[#E2E8F0] p-6 bg-[#FAF9F5]">
-              <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif">
+            <section className="mb-12 border border-[#E2E8F0] p-4 sm:p-6 bg-[#FAF9F5]">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1E293B] mb-6 font-serif">
                 Initiate New Verification Request
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-6">
                 <div>
-                  <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                     Subject Address
                   </label>
                   <input
@@ -776,28 +850,28 @@ export default function ClientHome() {
                     value={subjectAddress}
                     onChange={(e) => setSubjectAddress(e.target.value)}
                     placeholder="G..."
-                    className="w-full border border-[#64748B] bg-white p-2.5 text-[#1E293B] focus:outline-none"
+                    className="w-full border border-[#64748B] bg-white p-2.5 text-xs sm:text-sm text-[#1E293B] focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                  <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                     Credential ID
                   </label>
                   <input
                     type="text"
                     value={requestCredId}
                     onChange={(e) => setRequestCredId(e.target.value)}
-                    className="w-full border border-[#64748B] bg-white p-2.5 text-[#1E293B] focus:outline-none"
+                    className="w-full border border-[#64748B] bg-white p-2.5 text-xs sm:text-sm text-[#1E293B] focus:outline-none"
                   />
                 </div>
               </div>
 
               <div className="mb-6">
-                <label className="block text-xs font-bold text-[#1E293B] uppercase mb-2">
+                <label className="block text-[10px] sm:text-xs font-bold text-[#1E293B] uppercase mb-2">
                   Select Requested Fields
                 </label>
-                <div className="flex space-x-6">
-                  <label className="flex items-center space-x-2 text-sm text-[#1E293B] font-semibold cursor-pointer">
+                <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-6">
+                  <label className="flex items-center space-x-2 text-xs sm:text-sm text-[#1E293B] font-semibold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={reqFullName}
@@ -806,7 +880,7 @@ export default function ClientHome() {
                     />
                     <span>Full Name</span>
                   </label>
-                  <label className="flex items-center space-x-2 text-sm text-[#1E293B] font-semibold cursor-pointer">
+                  <label className="flex items-center space-x-2 text-xs sm:text-sm text-[#1E293B] font-semibold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={reqDob}
@@ -815,7 +889,7 @@ export default function ClientHome() {
                     />
                     <span>Date of Birth</span>
                   </label>
-                  <label className="flex items-center space-x-2 text-sm text-[#1E293B] font-semibold cursor-pointer">
+                  <label className="flex items-center space-x-2 text-xs sm:text-sm text-[#1E293B] font-semibold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={reqLicenseClass}
@@ -830,18 +904,18 @@ export default function ClientHome() {
               <button
                 onClick={createAccessRequest}
                 disabled={!publicKey}
-                className="bg-[#1E293B] hover:bg-[#0F172A] disabled:bg-gray-400 text-white font-serif font-bold px-8 py-3 border-2 border-[#1E293B] transition shadow-md"
+                className="w-full sm:w-auto bg-[#1E293B] hover:bg-[#0F172A] disabled:bg-gray-400 text-white font-serif font-bold px-8 py-3 border-2 border-[#1E293B] transition shadow-md text-sm sm:text-base"
               >
                 Submit Request
               </button>
             </section>
 
             <section className="mb-12">
-              <h2 className="text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
+              <h2 className="text-xl sm:text-2xl font-bold text-[#1E293B] mb-6 font-serif border-b border-[#E2E8F0] pb-2">
                 Submitted Verification Requests
               </h2>
               {sentRequests.length === 0 ? (
-                <div className="border border-dashed border-[#64748B] rounded-lg p-8 text-center text-[#64748B]">
+                <div className="border border-dashed border-[#64748B] rounded-lg p-6 sm:p-8 text-center text-sm text-[#64748B]">
                   No verification requests initiated by this wallet.
                 </div>
               ) : (
@@ -849,34 +923,34 @@ export default function ClientHome() {
                   {sentRequests.map((req) => (
                     <div
                       key={req.id}
-                      className="border border-[#1E293B] p-6 bg-[#FFFDFB] shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center"
+                      className="border border-[#1E293B] p-4 sm:p-6 bg-[#FFFDFB] shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0"
                     >
                       <div>
-                        <div className="text-xs font-bold text-[#C59B27] uppercase">
+                        <div className="text-[10px] sm:text-xs font-bold text-[#C59B27] uppercase">
                           Request ID: {req.id}
                         </div>
-                        <div className="font-serif font-bold text-lg text-[#1E293B] mt-1">
-                          Subject: {req.subject.slice(0, 8)}...{req.subject.slice(-8)}
+                        <div className="font-serif font-bold text-base sm:text-lg text-[#1E293B] mt-1 break-all">
+                          Subject: {req.subject}
                         </div>
-                        <div className="text-sm text-[#64748B] mt-2">
+                        <div className="text-xs sm:text-sm text-[#64748B] mt-2">
                           Requested fields: {req.requestedFields.join(', ')}
                         </div>
-                        <div className="text-xs font-bold text-[#851C1C] mt-2 uppercase">
+                        <div className="text-[10px] sm:text-xs font-bold text-[#851C1C] mt-2 uppercase">
                           Status: {req.status}
                         </div>
                       </div>
 
                       {req.status === 'granted' && (
-                        <div className="mt-4 md:mt-0 flex space-x-3">
+                        <div className="w-full md:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-3">
                           <button
                             onClick={() => verifyRequest(req, false)}
-                            className="bg-[#851C1C] hover:bg-[#991B1B] text-white font-serif font-bold px-4 py-2 text-sm border border-[#851C1C] transition shadow-sm"
+                            className="w-full sm:w-auto bg-[#851C1C] hover:bg-[#991B1B] text-white font-serif font-bold px-4 py-2 text-xs sm:text-sm border border-[#851C1C] transition shadow-sm"
                           >
                             Verify Disclosures
                           </button>
                           <button
                             onClick={() => verifyRequest(req, true)}
-                            className="bg-transparent hover:bg-red-50 text-[#851C1C] font-serif font-bold px-4 py-2 text-sm border border-[#851C1C] transition"
+                            className="w-full sm:w-auto bg-transparent hover:bg-red-50 text-[#851C1C] font-serif font-bold px-4 py-2 text-xs sm:text-sm border border-[#851C1C] transition"
                           >
                             Test Tampered Salt
                           </button>
@@ -889,41 +963,65 @@ export default function ClientHome() {
             </section>
 
             {verifiedResult?.show && (
-              <section className="border-4 border-double border-[#851C1C] p-8 bg-[#FAF8F5] text-center max-w-md mx-auto my-8 relative">
+              <section className="border-4 border-double border-[#851C1C] p-6 sm:p-8 bg-[#FAF8F5] text-center max-w-md mx-auto my-8 relative">
                 <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none font-serif text-9xl select-none">
                   W
                 </div>
-                <h3 className="font-serif font-bold text-2xl text-[#851C1C] mb-4">
+                <h3 className="font-serif font-bold text-xl sm:text-2xl text-[#851C1C] mb-4">
                   OFFICIAL VERIFICATION SEAL
                 </h3>
                 <div className="my-6">
                   {verifiedResult.valid ? (
-                    <div className="inline-block border-4 border-green-800 text-green-800 font-serif font-black text-3xl px-8 py-3 tracking-widest uppercase rotate-3">
-                      VERIFIED SUCCESS
+                    <div className="inline-block border-4 border-green-800 text-green-800 font-serif font-black text-2xl sm:text-3xl px-6 sm:px-8 py-3 tracking-widest uppercase rotate-3">
+                      {verifiedResult.details}
                     </div>
                   ) : (
-                    <div className="inline-block border-4 border-[#851C1C] text-[#851C1C] font-serif font-black text-3xl px-8 py-3 tracking-widest uppercase rotate-3">
-                      VERIFICATION FAILED
+                    <div className="inline-block border-4 border-[#851C1C] text-[#851C1C] font-serif font-black text-2xl sm:text-3xl px-6 sm:px-8 py-3 tracking-widest uppercase rotate-3">
+                      {verifiedResult.details}
                     </div>
                   )}
                 </div>
-                <p className="text-xs text-[#64748B] font-mono mt-4">
-                  {verifiedResult.txHash}
-                </p>
               </section>
             )}
           </div>
         )}
       </div>
 
+      {/* 3 Explicit Visually Distinguished Error Overlays */}
+      {errorState?.show && (
+        <div className="fixed inset-0 bg-[#0F172A] bg-opacity-70 flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-[#FFFDF9] border-4 border-[#851C1C] max-w-md w-full p-6 sm:p-8 relative shadow-2xl">
+            {/* Wax Seal Warning indicator */}
+            <div className="w-12 h-12 rounded-full border-4 border-[#851C1C] flex items-center justify-center mx-auto mb-4 font-serif text-[#851C1C] text-xl font-black">
+              !
+            </div>
+            <h3 className="font-serif font-black text-xl sm:text-2xl text-[#851C1C] text-center uppercase tracking-wide">
+              {errorState.title}
+            </h3>
+            <p className="text-xs sm:text-sm text-[#64748B] text-center mt-4 font-mono leading-relaxed bg-[#FAF7F2] p-4 border border-[#E2E8F0]">
+              {errorState.message}
+            </p>
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={() => setErrorState(null)}
+                className="bg-[#1E293B] hover:bg-[#0F172A] text-white font-serif font-bold px-8 py-2.5 border-2 border-[#1E293B] transition"
+              >
+                Acknowledge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Blockchain Pending State Indicator */}
       {loading && (
-        <div className="fixed inset-0 bg-[#0F172A] bg-opacity-70 flex items-center justify-center z-50">
-          <div className="bg-[#FDFBF7] p-8 border-4 border-[#1E293B] max-w-sm text-center shadow-2xl">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#851C1C] mx-auto mb-4"></div>
-            <p className="font-serif font-bold text-lg text-[#1E293B]">
+        <div className="fixed inset-0 bg-[#0F172A] bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#FDFBF7] p-6 sm:p-8 border-4 border-[#1E293B] max-w-sm w-full text-center shadow-2xl">
+            <div className="animate-spin rounded-full h-10 w-10 sm:h-12 sm:w-12 border-b-2 border-[#851C1C] mx-auto mb-4"></div>
+            <p className="font-serif font-bold text-base sm:text-lg text-[#1E293B]">
               Processing Transaction
             </p>
-            <p className="text-sm text-[#64748B] mt-2 font-mono">
+            <p className="text-xs sm:text-sm text-[#64748B] mt-2 font-mono break-words">
               {loadingText}
             </p>
           </div>
