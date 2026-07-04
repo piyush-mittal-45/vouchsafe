@@ -8,6 +8,7 @@ import {
   StellarWalletsKit,
   Networks
 } from '@creit.tech/stellar-wallets-kit';
+import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { nativeToScVal, xdr, scValToNative } from '@stellar/stellar-sdk';
 import {
   REGISTRY_ID,
@@ -21,7 +22,8 @@ import {
   computeLeaf,
   computeParent,
   getLatestLedger,
-  getContractEvents
+  getContractEvents,
+  getTransactionReturnValue
 } from '../lib/soroban';
 import {
   deriveKeyFromSignature,
@@ -70,6 +72,10 @@ export default function ClientHome() {
   const [activityFeed, setActivityFeed] = useState<any[]>([]);
   const lastPolledLedgerRef = useRef<number>(0);
 
+  // Wallet detection (null = not yet checked)
+  const [walletDetected, setWalletDetected] = useState<boolean | null>(null);
+  const freighterRef = useRef<FreighterModule | null>(null);
+
   const [verifiedResult, setVerifiedResult] = useState<{
     show: boolean;
     valid: boolean;
@@ -79,8 +85,17 @@ export default function ClientHome() {
 
   // Initialize Stellar Wallet Kit on mount
   useEffect(() => {
-    StellarWalletsKit.setNetwork(Networks.TESTNET);
-    
+    const freighter = new FreighterModule();
+    freighterRef.current = freighter;
+    StellarWalletsKit.init({
+      modules: [freighter],
+      network: Networks.TESTNET
+    });
+    freighter.isAvailable()
+      .then(setWalletDetected)
+      .catch(() => setWalletDetected(false));
+
+
     getLatestLedger().then(seq => {
       lastPolledLedgerRef.current = seq > 50 ? seq - 50 : 1;
     }).catch(err => {
@@ -140,9 +155,9 @@ export default function ClientHome() {
   const handleException = (err: any) => {
     console.error("Handled exception:", err);
     
-    // 1. Check if wallet missing
-    const isWalletInstalled = typeof window !== 'undefined' && (window as any).stellarWallet;
-    
+    // 1. Check if wallet missing (walletDetected is null until the first check completes)
+    const isWalletInstalled = walletDetected !== false;
+
     // 2. Check if user rejected signature
     const errMsg = err?.message || JSON.stringify(err) || "";
     const isRejected = errMsg.toLowerCase().includes('cancel') || 
@@ -191,7 +206,10 @@ export default function ClientHome() {
       setLoadingText('Step 1/2: Requesting signature to derive secure local database key...');
       
       const challenge = 'Authorize VouchSafe local encrypted database access.';
-      const signRes = await StellarWalletsKit.signMessage(challenge);
+      const signRes = await StellarWalletsKit.signMessage(challenge, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey
+      });
       
       if (!signRes || !signRes.signedMessage) {
         throw new Error('Wallet signature is required to open the vault.');
@@ -221,17 +239,39 @@ export default function ClientHome() {
   };
 
   const connectWallet = async () => {
-    // Check if wallet installed first
-    const isWalletInstalled = typeof window !== 'undefined' && (window as any).stellarWallet;
-    if (!isWalletInstalled) {
-      handleException(new Error('Wallet not installed'));
+    // Re-check availability live in case Freighter was installed after page load
+    const available = freighterRef.current
+      ? await freighterRef.current.isAvailable().catch(() => false)
+      : false;
+    setWalletDetected(available);
+    if (!available) {
+      setErrorState({
+        show: true,
+        title: "Freighter Wallet Missing",
+        message: "No compatible wallet found. Please install the Freighter browser extension to securely manage identities.",
+        type: "wallet_missing"
+      });
       return;
     }
-    
+
     try {
       setLoading(true);
       setLoadingText('Connecting wallet...');
       const { address } = await StellarWalletsKit.authModal();
+
+      // Enforce Testnet: the contracts only exist there
+      const { networkPassphrase } = await StellarWalletsKit.getNetwork();
+      if (networkPassphrase !== Networks.TESTNET) {
+        await StellarWalletsKit.disconnect().catch(() => {});
+        setErrorState({
+          show: true,
+          title: "Wrong Network",
+          message: "Your wallet is not on Testnet. Open Freighter, switch the network to Test Net, and connect again.",
+          type: "other"
+        });
+        return;
+      }
+
       setPublicKey(address);
     } catch (err) {
       handleException(err);
@@ -392,8 +432,17 @@ export default function ClientHome() {
           nativeToScVal(0, { type: 'u64' })
         ]
       );
-      const signedIssueXdr = await StellarWalletsKit.signTransaction(issueXdr);
-      await submitTransaction(signedIssueXdr.signedTxXdr);
+      const signedIssueXdr = await StellarWalletsKit.signTransaction(issueXdr, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey
+      });
+      const issueTxHash = await submitTransaction(signedIssueXdr.signedTxXdr);
+
+      // issue_attestation returns the newly assigned (global) attestation id
+      const attestationId = await getTransactionReturnValue(issueTxHash);
+      if (attestationId === null || attestationId === undefined) {
+        throw new Error('Could not read attestation id from issue_attestation transaction.');
+      }
 
       const nextCredId = credentials.length + 1;
       await storeEncryptedCredential(nextCredId, credData, encryptionKey);
@@ -404,12 +453,15 @@ export default function ClientHome() {
         'store_credential',
         [
           { value: publicKey, type: 'address' },
-          nativeToScVal(1, { type: 'u64' }), // static counter id
+          nativeToScVal(attestationId, { type: 'u64' }),
           nativeToScVal(nextCredId.toString(), { type: 'symbol' }),
           nativeToScVal(['full_name', 'date_of_birth', 'license_class'])
         ]
       );
-      const signedStoreXdr = await StellarWalletsKit.signTransaction(storeXdr);
+      const signedStoreXdr = await StellarWalletsKit.signTransaction(storeXdr, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey
+      });
       await submitTransaction(signedStoreXdr.signedTxXdr);
 
       alert('Credential successfully encrypted, stored locally in IndexedDB, and metadata registered on-chain!');
@@ -445,7 +497,10 @@ export default function ClientHome() {
       );
       
       setLoadingText('Step 2/2: Submitting transaction to Testnet...');
-      const signed = await StellarWalletsKit.signTransaction(xdrString);
+      const signed = await StellarWalletsKit.signTransaction(xdrString, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey
+      });
       await submitTransaction(signed.signedTxXdr);
       alert('Access request submitted successfully!');
       await updateData();
@@ -513,7 +568,10 @@ export default function ClientHome() {
           nativeToScVal(expiry, { type: 'u64' })
         ]
       );
-      const signed = await StellarWalletsKit.signTransaction(xdrString);
+      const signed = await StellarWalletsKit.signTransaction(xdrString, {
+        networkPassphrase: Networks.TESTNET,
+        address: publicKey
+      });
       await submitTransaction(signed.signedTxXdr);
       alert('Access granted and selective disclosure payload securely prepared!');
       await updateData();

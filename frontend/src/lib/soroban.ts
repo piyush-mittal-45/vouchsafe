@@ -7,7 +7,8 @@ import {
   xdr,
   nativeToScVal,
   scValToNative,
-  Keypair
+  Keypair,
+  rpc
 } from '@stellar/stellar-sdk';
 import cryptoBrowser from 'crypto';
 import { Buffer } from 'buffer';
@@ -62,6 +63,15 @@ export function computeParent(a: Buffer, b: Buffer): Buffer {
   return sha256(concat);
 }
 
+// Accept either a ready xdr.ScVal or a plain { value, type } descriptor
+function normalizeParam(param: any): xdr.ScVal {
+  if (param instanceof xdr.ScVal) return param;
+  if (param && typeof param === 'object' && 'value' in param && typeof param.type === 'string') {
+    return nativeToScVal(param.value, { type: param.type });
+  }
+  return nativeToScVal(param);
+}
+
 // Build and simulate/prepare a transaction for Freighter to sign
 export async function buildTransaction(
   sourceAddress: string,
@@ -71,12 +81,12 @@ export async function buildTransaction(
 ): Promise<string> {
   const account = await getSourceAccount(sourceAddress);
   const contract = new Contract(contractId);
-  
+
   const tx = new TransactionBuilder(account, {
     fee: '500000', // high max fee to cover simulation
     networkPassphrase: Networks.TESTNET
   })
-    .addOperation(contract.call(methodName, ...params))
+    .addOperation(contract.call(methodName, ...params.map(normalizeParam)))
     .setTimeout(60)
     .build();
 
@@ -89,10 +99,10 @@ export async function buildTransaction(
       jsonrpc: '2.0',
       id: 1,
       method: 'simulateTransaction',
-      params: [tx.toXDR()]
+      params: { transaction: tx.toXDR() }
     })
   });
-  
+
   if (!response.ok) {
     throw new Error(`RPC Simulation request failed: ${response.statusText}`);
   }
@@ -100,19 +110,14 @@ export async function buildTransaction(
   if (result.error) {
     throw new Error(`Simulation failed: ${JSON.stringify(result.error)}`);
   }
-  
-  // If simulation is successful, reconstruct the transaction with the simulation details
+  if (result.result?.error) {
+    throw new Error(`Simulation failed: ${result.result.error}`);
+  }
+
+  // If simulation is successful, assemble the transaction with the simulation
+  // details (soroban data, resource fee, and auth entries)
   if (result.result && result.result.transactionData) {
-    const simTx = TransactionBuilder.fromXDR(tx.toXDR(), Networks.TESTNET) as any;
-    // Set footprints
-    const txData = xdr.SorobanTransactionData.fromXDR(result.result.transactionData, 'base64');
-    simTx.setSorobanData(txData);
-    
-    // Add exact simulation resource fees
-    const minFee = parseInt(result.result.minResourceFee) + 10000;
-    simTx.setFee((parseInt(simTx.fee) + minFee).toString());
-    
-    return simTx.toXDR();
+    return rpc.assembleTransaction(tx, result.result).build().toXDR();
   }
 
   return tx.toXDR();
@@ -128,7 +133,7 @@ export async function submitTransaction(xdrString: string): Promise<string> {
       jsonrpc: '2.0',
       id: 1,
       method: 'sendTransaction',
-      params: [xdrString]
+      params: { transaction: xdrString }
     })
   });
 
@@ -139,14 +144,15 @@ export async function submitTransaction(xdrString: string): Promise<string> {
   if (resData.error) {
     throw new Error(`Submission error: ${JSON.stringify(resData.error)}`);
   }
+  if (resData.result.status === 'ERROR') {
+    throw new Error(`Submission rejected: ${resData.result.errorResultXdr || JSON.stringify(resData.result)}`);
+  }
 
   const hash = resData.result.hash;
   console.log(`Transaction submitted. Hash: ${hash}`);
 
-  // Poll for completion
-  let status = resData.result.status;
-  let attempts = 0;
-  while (status === 'PENDING' && attempts < 10) {
+  // Poll for completion; status stays NOT_FOUND until the tx is included in a ledger
+  for (let attempts = 0; attempts < 20; attempts++) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
     const getRes = await fetch(serverUrl, {
       method: 'POST',
@@ -155,24 +161,49 @@ export async function submitTransaction(xdrString: string): Promise<string> {
         jsonrpc: '2.0',
         id: 1,
         method: 'getTransaction',
-        params: [hash]
+        params: { hash }
       })
     });
     const getResData = await getRes.json();
-    if (getResData.result) {
-      status = getResData.result.status;
-      if (status === 'SUCCESS') {
-        return hash;
-      }
-      if (status === 'FAILED') {
-        throw new Error(`Transaction failed: ${JSON.stringify(getResData.result.resultXdr)}`);
-      }
+    const status = getResData.result?.status;
+    if (status === 'SUCCESS') {
+      return hash;
     }
-    attempts++;
+    if (status === 'FAILED') {
+      throw new Error(`Transaction failed: ${JSON.stringify(getResData.result.resultXdr)}`);
+    }
+    // NOT_FOUND (or a transient fetch hiccup): keep polling
   }
 
-  if (status === 'SUCCESS') return hash;
   throw new Error(`Transaction polling timeout. Hash: ${hash}`);
+}
+
+// Fetch the decoded return value of a completed transaction
+export async function getTransactionReturnValue(hash: string): Promise<any> {
+  const serverUrl = 'https://soroban-testnet.stellar.org';
+  const response = await fetch(serverUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getTransaction',
+      params: { hash }
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`getTransaction failed: ${response.statusText}`);
+  }
+  const data = await response.json();
+  if (!data.result?.resultMetaXdr) return null;
+  const meta = xdr.TransactionMeta.fromXDR(data.result.resultMetaXdr, 'base64');
+  let retval: xdr.ScVal | null | undefined = null;
+  if (meta.switch() === 3) {
+    retval = meta.v3().sorobanMeta()?.returnValue();
+  } else if (meta.switch() === 4) {
+    retval = (meta as any).v4().sorobanMeta()?.returnValue();
+  }
+  return retval ? scValToNative(retval) : null;
 }
 
 export async function invokeReadOnly(
@@ -187,7 +218,7 @@ export async function invokeReadOnly(
     fee: '100000',
     networkPassphrase: Networks.TESTNET
   })
-    .addOperation(contract.call(methodName, ...params))
+    .addOperation(contract.call(methodName, ...params.map(normalizeParam)))
     .setTimeout(30)
     .build();
 
@@ -199,10 +230,10 @@ export async function invokeReadOnly(
       jsonrpc: '2.0',
       id: 1,
       method: 'simulateTransaction',
-      params: [tx.toXDR()]
+      params: { transaction: tx.toXDR() }
     })
   });
-  
+
   if (!response.ok) {
     throw new Error(`RPC simulation failed: ${response.statusText}`);
   }
@@ -210,9 +241,13 @@ export async function invokeReadOnly(
   if (result.error) {
     throw new Error(`RPC simulation failed: ${JSON.stringify(result.error)}`);
   }
-  
-  if (result.result && result.result.retval) {
-    const rawRetval = xdr.ScVal.fromXDR(result.result.retval, 'base64');
+  if (result.result?.error) {
+    throw new Error(`RPC simulation failed: ${result.result.error}`);
+  }
+
+  const retvalXdr = result.result?.results?.[0]?.xdr;
+  if (retvalXdr) {
+    const rawRetval = xdr.ScVal.fromXDR(retvalXdr, 'base64');
     return scValToNative(rawRetval);
   }
   return null;
@@ -243,16 +278,15 @@ export async function registerUserAsIssuer(userAddress: string) {
       jsonrpc: '2.0',
       id: 1,
       method: 'simulateTransaction',
-      params: [tx.toXDR()]
+      params: { transaction: tx.toXDR() }
     })
   });
   const result = await response.json();
+  if (result.result?.error) {
+    throw new Error(`Issuer registration simulation failed: ${result.result.error}`);
+  }
   if (result.result && result.result.transactionData) {
-    const simTx = TransactionBuilder.fromXDR(tx.toXDR(), Networks.TESTNET) as any;
-    const txData = xdr.SorobanTransactionData.fromXDR(result.result.transactionData, 'base64');
-    simTx.setSorobanData(txData);
-    const minFee = parseInt(result.result.minResourceFee) + 10000;
-    simTx.setFee((parseInt(simTx.fee) + minFee).toString());
+    const simTx = rpc.assembleTransaction(tx, result.result).build();
     simTx.sign(deployerKeyPair);
     return await submitTransaction(simTx.toXDR());
   }
@@ -267,8 +301,7 @@ export async function getLatestLedger(): Promise<number> {
     body: JSON.stringify({
       jsonrpc: '2.0',
       id: 1,
-      method: 'getLatestLedger',
-      params: []
+      method: 'getLatestLedger'
     })
   });
   
