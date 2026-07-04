@@ -1,9 +1,12 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, BytesN, Env, Symbol};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, BytesN, Env, Symbol,
+};
 
-fn setup_registry(env: &Env) -> (Address, Address, Address, AttestationRegistryClient) {
+fn setup_registry(env: &Env) -> (Address, Address, Address, AttestationRegistryClient<'_>) {
     env.mock_all_auths();
     env.ledger().set_timestamp(500);
 
@@ -30,7 +33,14 @@ fn test_issue_attestation_stores_correct_fields() {
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
     let expires_at = 1500;
 
-    let id = client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &expires_at);
+    let id = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &expires_at,
+    );
     assert_eq!(id, 1);
 
     let att = client.get_attestation(&id);
@@ -56,7 +66,14 @@ fn test_revoke_attestation_flips_revoked_and_invalidates() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
 
-    let id = client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    let id = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
     assert!(client.is_valid(&id));
 
     client.revoke_attestation(&issuer, &id);
@@ -77,7 +94,14 @@ fn test_is_valid_returns_false_past_expiry() {
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
     let expires_at = 1000;
 
-    let id = client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &expires_at);
+    let id = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &expires_at,
+    );
     assert!(client.is_valid(&id));
 
     // Fast forward past expiry
@@ -95,7 +119,14 @@ fn test_issue_attestation_fails_for_unregistered_issuer() {
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
 
-    client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
 }
 
 #[test]

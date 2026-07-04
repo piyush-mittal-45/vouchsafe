@@ -1,10 +1,21 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, BytesN, Env, Symbol, Vec as SorobanVec};
 use attestation_registry::{AttestationRegistry, AttestationRegistryClient};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, BytesN, Env, Symbol, Vec as SorobanVec,
+};
 
-fn setup_vault(env: &Env) -> (Address, Address, Address, AttestationRegistryClient, CredentialVaultClient) {
+fn setup_vault(
+    env: &Env,
+) -> (
+    Address,
+    Address,
+    Address,
+    AttestationRegistryClient<'_>,
+    CredentialVaultClient<'_>,
+) {
     env.mock_all_auths();
     env.ledger().set_timestamp(500);
 
@@ -34,7 +45,14 @@ fn test_store_credential_succeeds_if_valid() {
 
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
@@ -72,7 +90,14 @@ fn test_store_credential_fails_if_revoked() {
 
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
 
     // Revoke
     att_reg_client.revoke_attestation(&issuer, &attestation_id);
@@ -90,7 +115,14 @@ fn test_list_credentials_returns_correct_set() {
 
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let field_names = SorobanVec::new(&env);
@@ -111,7 +143,14 @@ fn test_remove_credential_fails_for_non_owner() {
 
     let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
     let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &merkle_root, &schema_hash, &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let field_names = SorobanVec::new(&env);

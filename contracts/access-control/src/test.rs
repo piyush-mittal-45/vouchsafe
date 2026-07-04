@@ -1,11 +1,24 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Bytes, BytesN, Env, Symbol, Vec as SorobanVec};
 use attestation_registry::{AttestationRegistry, AttestationRegistryClient};
 use credential_vault::{CredentialVault, CredentialVaultClient};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Bytes, BytesN, Env, Symbol, Vec as SorobanVec,
+};
 
-fn setup_all(env: &Env) -> (Address, Address, Address, Address, AttestationRegistryClient, CredentialVaultClient, AccessControlClient) {
+fn setup_all(
+    env: &Env,
+) -> (
+    Address,
+    Address,
+    Address,
+    Address,
+    AttestationRegistryClient<'_>,
+    CredentialVaultClient<'_>,
+    AccessControlClient<'_>,
+) {
     env.mock_all_auths();
     env.ledger().set_timestamp(1000);
 
@@ -31,7 +44,15 @@ fn setup_all(env: &Env) -> (Address, Address, Address, Address, AttestationRegis
     let access_control_client = AccessControlClient::new(env, &access_control_id);
     access_control_client.initialize(&cred_vault_id);
 
-    (admin, issuer, subject, access_control_id, att_reg_client, cred_vault_client, access_control_client)
+    (
+        admin,
+        issuer,
+        subject,
+        access_control_id,
+        att_reg_client,
+        cred_vault_client,
+        access_control_client,
+    )
 }
 
 fn compute_leaf(env: &Env, name: Symbol, value: &str, salt: &[u8; 32]) -> BytesN<32> {
@@ -58,7 +79,8 @@ fn compute_parent(env: &Env, a: BytesN<32>, b: BytesN<32>) -> BytesN<32> {
 #[test]
 fn test_verify_disclosure_success() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let credential_type = Symbol::new(&env, "passport");
     let schema_hash = BytesN::from_array(&env, &[0u8; 32]);
@@ -76,20 +98,29 @@ fn test_verify_disclosure_success() {
     let root = compute_parent(&env, leaf0.clone(), leaf1.clone());
 
     let expires_at = env.ledger().timestamp() + 3600;
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &credential_type, &root, &schema_hash, &expires_at);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &credential_type,
+        &root,
+        &schema_hash,
+        &expires_at,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
     field_names.push_back(age_sym.clone());
 
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
 
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
 
     let grant_expiry = env.ledger().timestamp() + 1800;
     access_control_client.grant_access(&subject, &req_id, &grant_expiry);
@@ -113,23 +144,33 @@ fn test_verify_disclosure_success() {
 #[should_panic(expected = "subject mismatch")]
 fn test_grant_access_unauthorized() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let salt0 = [1u8; 32];
     let leaf0 = compute_leaf(&env, name_sym.clone(), "Alice", &salt0);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &leaf0, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &leaf0,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
 
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
 
     let attacker = Address::generate(&env);
     // Attacker tries to grant access instead of subject
@@ -139,7 +180,8 @@ fn test_grant_access_unauthorized() {
 #[test]
 fn test_verify_disclosure_failure_tampered_value() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let age_sym = Symbol::new(&env, "age");
@@ -149,18 +191,27 @@ fn test_verify_disclosure_failure_tampered_value() {
     let leaf1 = compute_leaf(&env, age_sym.clone(), "25", &salt1);
     let root = compute_parent(&env, leaf0.clone(), leaf1.clone());
 
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &root, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &root,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
     field_names.push_back(age_sym.clone());
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
     access_control_client.grant_access(&subject, &req_id, &2000);
 
     let mut proof = SorobanVec::new(&env);
@@ -180,7 +231,8 @@ fn test_verify_disclosure_failure_tampered_value() {
 #[test]
 fn test_verify_disclosure_failure_wrong_salt() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let age_sym = Symbol::new(&env, "age");
@@ -190,18 +242,27 @@ fn test_verify_disclosure_failure_wrong_salt() {
     let leaf1 = compute_leaf(&env, age_sym.clone(), "25", &salt1);
     let root = compute_parent(&env, leaf0.clone(), leaf1.clone());
 
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &root, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &root,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
     field_names.push_back(age_sym.clone());
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
     access_control_client.grant_access(&subject, &req_id, &2000);
 
     let wrong_salt = [9u8; 32];
@@ -222,22 +283,32 @@ fn test_verify_disclosure_failure_wrong_salt() {
 #[test]
 fn test_verify_disclosure_failure_expired_grant() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let salt0 = [1u8; 32];
     let leaf0 = compute_leaf(&env, name_sym.clone(), "Alice", &salt0);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &leaf0, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &leaf0,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
     access_control_client.grant_access(&subject, &req_id, &1500);
 
     // Fast-forward past expiry
@@ -259,22 +330,32 @@ fn test_verify_disclosure_failure_expired_grant() {
 #[test]
 fn test_verify_disclosure_failure_revoked_grant() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let salt0 = [1u8; 32];
     let leaf0 = compute_leaf(&env, name_sym.clone(), "Alice", &salt0);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &leaf0, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &leaf0,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone());
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(name_sym.clone());
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
     access_control_client.grant_access(&subject, &req_id, &2000);
 
     // Revoke
@@ -296,23 +377,33 @@ fn test_verify_disclosure_failure_revoked_grant() {
 #[test]
 fn test_verify_disclosure_failure_field_not_in_schema() {
     let env = Env::default();
-    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) = setup_all(&env);
+    let (_, issuer, subject, _, att_reg_client, cred_vault_client, access_control_client) =
+        setup_all(&env);
 
     let name_sym = Symbol::new(&env, "name");
     let salt0 = [1u8; 32];
     let leaf0 = compute_leaf(&env, name_sym.clone(), "Alice", &salt0);
-    let attestation_id = att_reg_client.issue_attestation(&issuer, &subject, &Symbol::new(&env, "passport"), &leaf0, &BytesN::from_array(&env, &[0u8; 32]), &0);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &leaf0,
+        &BytesN::from_array(&env, &[0u8; 32]),
+        &0,
+    );
 
     let pointer = Symbol::new(&env, "ipfs_somepointer");
     let mut field_names = SorobanVec::new(&env);
     field_names.push_back(name_sym.clone()); // Only name is in schema
-    let cred_id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+    let cred_id =
+        cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
 
     let verifier = Address::generate(&env);
     let age_sym = Symbol::new(&env, "age");
     let mut requested_fields = SorobanVec::new(&env);
     requested_fields.push_back(age_sym.clone());
-    let req_id = access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
+    let req_id =
+        access_control_client.request_proof(&verifier, &subject, &cred_id, &requested_fields);
     access_control_client.grant_access(&subject, &req_id, &2000);
 
     let proof = SorobanVec::new(&env);

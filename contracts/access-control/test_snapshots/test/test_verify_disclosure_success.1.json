@@ -782,7 +782,9 @@
                 "symbol": "name"
               }
             ],
-            "data": "void"
+            "data": {
+              "map": []
+            }
           }
         }
       },

@@ -38,7 +38,10 @@ impl AttestationRegistry {
     }
 
     pub fn get_admin(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap_or_else(|| panic!("not initialized"))
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("not initialized"))
     }
 
     pub fn register_issuer(env: Env, issuer: Address, name: Symbol) {
@@ -90,7 +93,9 @@ impl AttestationRegistry {
             revoked: false,
         };
 
-        env.storage().persistent().set(&DataKey::Attestation(counter), &attestation);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Attestation(counter), &attestation);
         counter
     }
 

@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, Symbol, IntoVal, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, Address, BytesN, Env, IntoVal, Symbol, Vec,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
@@ -31,7 +33,7 @@ pub struct Attestation {
 pub enum DataKey {
     AttestationRegistry,
     Counter,
-    Credential(u64), // ID -> CredentialMeta
+    Credential(u64),             // ID -> CredentialMeta
     SubjectCredentials(Address), // Subject -> Vec<u64>
 }
 
@@ -44,12 +46,17 @@ impl CredentialVault {
         if env.storage().instance().has(&DataKey::AttestationRegistry) {
             panic!("already initialized");
         }
-        env.storage().instance().set(&DataKey::AttestationRegistry, &attestation_registry);
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestationRegistry, &attestation_registry);
         env.storage().instance().set(&DataKey::Counter, &0u64);
     }
 
     pub fn get_attestation_registry(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::AttestationRegistry).unwrap_or_else(|| panic!("not initialized"))
+        env.storage()
+            .instance()
+            .get(&DataKey::AttestationRegistry)
+            .unwrap_or_else(|| panic!("not initialized"))
     }
 
     pub fn store_credential(
@@ -96,12 +103,16 @@ impl CredentialVault {
             created_at: env.ledger().timestamp(),
         };
 
-        env.storage().persistent().set(&DataKey::Credential(counter), &meta);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Credential(counter), &meta);
 
         // Update list of credentials for subject
         let mut list = Self::list_credentials(env.clone(), subject.clone());
         list.push_back(counter);
-        env.storage().persistent().set(&DataKey::SubjectCredentials(subject), &list);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SubjectCredentials(subject), &list);
 
         counter
     }
@@ -128,7 +139,9 @@ impl CredentialVault {
             panic!("subject mismatch");
         }
 
-        env.storage().persistent().remove(&DataKey::Credential(credential_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Credential(credential_id));
 
         // Remove from list
         let list = Self::list_credentials(env.clone(), subject.clone());
@@ -139,7 +152,9 @@ impl CredentialVault {
                 new_list.push_back(id);
             }
         }
-        env.storage().persistent().set(&DataKey::SubjectCredentials(subject), &new_list);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SubjectCredentials(subject), &new_list);
     }
 }
 
