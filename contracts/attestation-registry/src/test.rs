@@ -148,3 +148,31 @@ fn test_duplicate_issuer_registration_is_rejected() {
     // Duplicate call
     client.register_issuer(&issuer, &name);
 }
+
+#[test]
+fn test_revoked_attestation_is_invalid() {
+    let env = Env::default();
+    let (_, issuer, subject, client) = setup_registry(&env);
+
+    let name = Symbol::new(&env, "Gov");
+    client.register_issuer(&issuer, &name);
+
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+    let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+    let id = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
+    assert!(client.is_valid(&id));
+
+    // Revoke it
+    client.revoke_attestation(&issuer, &id);
+
+    // It should now be invalid
+    assert!(!client.is_valid(&id));
+}
