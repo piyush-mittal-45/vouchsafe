@@ -1,5 +1,8 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, BytesN, Env, Symbol, IntoVal, Vec};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, Address, Bytes, BytesN, Env, IntoVal,
+    Symbol, Vec,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 #[contracttype]
@@ -34,7 +37,7 @@ pub struct AccessRequest {
     pub subject: Address,
     pub credential_id: u64,
     pub requested_fields: Vec<Symbol>,
-    pub status: Symbol,            // "pending" | "granted" | "revoked" | "expired"
+    pub status: Symbol, // "pending" | "granted" | "revoked" | "expired"
     pub expiry: u64,
 }
 
@@ -55,6 +58,18 @@ pub enum DataKey {
     AccessRequest(u64), // ID -> AccessRequest
 }
 
+#[allow(non_camel_case_types)]
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct disclosure {
+    #[topic]
+    pub request_id: u64,
+    #[topic]
+    pub verifier: Address,
+    #[topic]
+    pub field_name: Symbol,
+}
+
 #[contract]
 pub struct AccessControl;
 
@@ -64,12 +79,17 @@ impl AccessControl {
         if env.storage().instance().has(&DataKey::CredentialVault) {
             panic!("already initialized");
         }
-        env.storage().instance().set(&DataKey::CredentialVault, &credential_vault);
+        env.storage()
+            .instance()
+            .set(&DataKey::CredentialVault, &credential_vault);
         env.storage().instance().set(&DataKey::Counter, &0u64);
     }
 
     pub fn get_credential_vault(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::CredentialVault).unwrap_or_else(|| panic!("not initialized"))
+        env.storage()
+            .instance()
+            .get(&DataKey::CredentialVault)
+            .unwrap_or_else(|| panic!("not initialized"))
     }
 
     pub fn request_proof(
@@ -95,7 +115,9 @@ impl AccessControl {
             expiry: 0,
         };
 
-        env.storage().persistent().set(&DataKey::AccessRequest(counter), &request);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccessRequest(counter), &request);
         counter
     }
 
@@ -136,11 +158,7 @@ impl AccessControl {
         env.storage().persistent().set(&key, &request);
     }
 
-    pub fn verify_disclosure(
-        env: Env,
-        request_id: u64,
-        disclosed: Vec<DisclosedField>,
-    ) -> bool {
+    pub fn verify_disclosure(env: Env, request_id: u64, disclosed: Vec<DisclosedField>) -> bool {
         let key = DataKey::AccessRequest(request_id);
         let mut request: AccessRequest = env
             .storage()
@@ -230,10 +248,12 @@ impl AccessControl {
             }
 
             // 4. Emit event: event_topic = "disclosure", fields = request_id, verifier, field name
-            env.events().publish(
-                (Symbol::new(&env, "disclosure"), request_id, request.verifier.clone(), field.name.clone()),
-                (),
-            );
+            disclosure {
+                request_id,
+                verifier: request.verifier.clone(),
+                field_name: field.name.clone(),
+            }
+            .publish(&env);
         }
 
         true
