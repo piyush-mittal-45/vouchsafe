@@ -79,6 +79,44 @@ VouchSafe uses a multi-contract architecture where attestations, user metadata, 
 2. **CredentialVault:** A subject-owned directory of stored credential metadata. It queries the `AttestationRegistry` to check if a referenced attestation is valid before storing.
 3. **AccessControl:** Handles proof requests from verifiers and grants from subjects. It performs the complete selective disclosure verification.
 
+### End-to-End Sequence Flow
+
+```mermaid
+sequence_diagram
+    autonumber
+    actor Issuer as Identity Issuer
+    actor Subject as Identity Subject
+    actor Verifier as Proof Verifier
+    participant AC as AccessControl Contract
+    participant CV as CredentialVault Contract
+    participant AR as AttestationRegistry Contract
+
+    Issuer->>AR: register_issuer(issuer_address, name)
+    Issuer->>AR: issue_attestation(issuer, subject, type, merkle_root, schema_hash, expiry)
+    Note over AR: Generates attestation_id (e.g., 1)
+
+    Subject->>CV: store_credential(subject, attestation_id, pointer, field_names)
+    CV->>AR: is_valid(attestation_id)
+    AR-->>CV: true
+    CV->>AR: get_attestation(attestation_id)
+    AR-->>CV: attestation data (verifies subject matches)
+    Note over CV: Stores metadata & assigns credential_id (e.g., 1)
+
+    Verifier->>AC: request_proof(verifier, subject, credential_id, requested_fields)
+    Note over AC: Creates request_id (e.g., 1) with status 'pending'
+
+    Subject->>AC: grant_access(subject, request_id, expiry)
+    Note over AC: Updates status to 'granted'
+
+    Verifier->>AC: verify_disclosure(request_id, disclosed_fields)
+    AC->>CV: get_credential_meta(credential_id)
+    CV-->>AC: credential_meta (contains attestation_id & field names)
+    AC->>AR: get_attestation(attestation_id)
+    AR-->>AC: attestation data (contains merkle_root, revoked status)
+    Note over AC: Verifies each disclosed field against Merkle root via proofs
+    AC-->>Verifier: returns true (verified) or false (failed)
+```
+
 ---
 
 ## 4. Inter-Contract Calls
@@ -136,47 +174,49 @@ The E2E testnet transactions executed successfully on Stellar Testnet:
 
 ## 7. Test Output
 
-All 19 unit tests passing across the contracts workspace:
+All 21 unit tests passing across the contracts workspace:
 
 ```
 running 7 tests
-test test::test_verify_disclosure_failure_wrong_salt ... ok
-test test::test_verify_disclosure_success ... ok
-test test::test_grant_access_unauthorized - should panic ... ok
-test test::test_verify_disclosure_failure_tampered_value ... ok
-test test::test_verify_disclosure_failure_expired_grant ... ok
-test test::test_verify_disclosure_failure_field_not_in_schema ... ok
 test test::test_verify_disclosure_failure_revoked_grant ... ok
+test test::test_verify_disclosure_failure_expired_grant ... ok
+test test::test_verify_disclosure_failure_wrong_salt ... ok
+test test::test_verify_disclosure_failure_tampered_value ... ok
+test test::test_grant_access_unauthorized - should panic ... ok
+test test::test_verify_disclosure_failure_field_not_in_schema ... ok
+test test::test_verify_disclosure_success ... ok
 
-test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
 
-running 6 tests
+running 7 tests
 test test::test_issue_attestation_fails_for_unregistered_issuer - should panic ... ok
-test test::test_get_attestation_fails_for_nonexistent_id - should panic ... ok
 test test::test_duplicate_issuer_registration_is_rejected - should panic ... ok
-test test::test_is_valid_returns_false_past_expiry ... ok
+test test::test_get_attestation_fails_for_nonexistent_id - should panic ... ok
 test test::test_issue_attestation_stores_correct_fields ... ok
+test test::test_revoked_attestation_is_invalid ... ok
+test test::test_is_valid_returns_false_past_expiry ... ok
 test test::test_revoke_attestation_flips_revoked_and_invalidates ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
 
-running 6 tests
-test test::test_get_credential_meta_fails_for_nonexistent_id - should panic ... ok
+running 7 tests
 test test::test_store_credential_fails_if_invalid_or_nonexistent_id - should panic ... ok
-test test::test_store_credential_fails_if_revoked ... ok
+test test::test_get_credential_meta_fails_for_nonexistent_id - should panic ... ok
+test test::test_store_credential_fails_if_revoked - should panic ... ok
+test test::test_remove_credential_success - should panic ... ok
+test test::test_store_credential_succeeds_if_valid ... ok
 test test::test_list_credentials_returns_correct_set ... ok
 test test::test_remove_credential_fails_for_non_owner - should panic ... ok
-test test::test_store_credential_succeeds_if_valid ... ok
 
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
 ```
 
 ---
 
 ## 8. CI/CD
 
-- **GitHub Actions Status:** PENDING — No remote repository configured (origin not set for local workspace).
-- **Run URL:** PENDING — Generate after pushing branch to remote repository.
+- **GitHub Actions Status:** [![CI](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml/badge.svg)](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml)
+- **Run URL:** [GitHub Actions Workflow Runs](https://github.com/mehtadaksh6969/vouchsafe/actions)
 
 ---
 
