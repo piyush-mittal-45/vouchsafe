@@ -82,7 +82,7 @@ VouchSafe uses a multi-contract architecture where attestations, user metadata, 
 ### End-to-End Sequence Flow
 
 ```mermaid
-sequence_diagram
+sequenceDiagram
     autonumber
     actor Issuer as Identity Issuer
     actor Subject as Identity Subject
