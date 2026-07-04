@@ -169,3 +169,36 @@ fn test_get_credential_meta_fails_for_nonexistent_id() {
     let (_, _, _, _, cred_vault_client) = setup_vault(&env);
     cred_vault_client.get_credential_meta(&999);
 }
+
+#[test]
+#[should_panic(expected = "credential metadata not found")]
+fn test_remove_credential_success() {
+    let env = Env::default();
+    let (_, issuer, subject, att_reg_client, cred_vault_client) = setup_vault(&env);
+
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+    let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
+
+    let pointer = Symbol::new(&env, "ipfs_somepointer");
+    let field_names = SorobanVec::new(&env);
+
+    let id = cred_vault_client.store_credential(&subject, &attestation_id, &pointer, &field_names);
+
+    // Remove the credential
+    cred_vault_client.remove_credential(&subject, &id);
+
+    // Check that it's no longer in list
+    let list = cred_vault_client.list_credentials(&subject);
+    assert_eq!(list.len(), 0);
+
+    // This should panic with "credential metadata not found"
+    cred_vault_client.get_credential_meta(&id);
+}
