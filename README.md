@@ -223,13 +223,15 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## 9. Screenshots
 
 *Screenshots captured on-device in the local sandbox workspace:*
-1. **Wallet Connected:** [VouchSafe UI Profile View](mobile_responsive_375.png) (includes XLM balance and account address).
-2. **Credential List:** [Parchment Document Folders](tablet_responsive_768.png).
-3. **Issuing Test Credential:** Form inputs for `fullName`, `dateOfBirth`, `licenseClass`.
-4. **Access Request & Selective Disclosure Approval:** Approve dialog with specific fields to disclose.
-5. **Verifier view seeing verification success:** Official Seal displaying `VERIFIED SUCCESS`.
-6. **Mobile view at 375px:** [iPhone SE layout](mobile_responsive_375.png).
-7. **CI/CD pipeline run screenshot:** PENDING — to be captured upon remote setup.
+
+### Desktop Interface (Live View)
+![VouchSafe UI Desktop Screenshot](media/test.png)
+
+### Mobile & Responsive Layout (iPhone SE Layout)
+![VouchSafe UI Mobile responsive view](media/mobile-view.PNG)
+
+### CI/CD Workflow Pipeline (GitHub Actions Success Run)
+![GitHub Actions CI/CD Passing Run](media/cicdrunnin.png)
 
 ---
 
@@ -241,4 +243,10 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## 11. Demo Video (1-2 min)
 
-- **Recording Link:** PENDING — to be recorded.
+Here is a comprehensive 1-2 minute walkthrough of VouchSafe demonstrating the deployment, wallet connection, selective disclosure authorization, and verifier check:
+
+<video src="media/video.mp4" controls width="100%"></video>
+
+*If the video player does not load, you can download or watch the raw file directly:*
+👉 **[Watch E2E Demo Video (MP4)](media/video.mp4)**
+
