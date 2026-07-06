@@ -4,7 +4,7 @@ use super::*;
 use attestation_registry::{AttestationRegistry, AttestationRegistryClient};
 use credential_vault::{CredentialVault, CredentialVaultClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, AuthorizedFunction, Ledger},
     Address, Bytes, BytesN, Env, Symbol, Vec as SorobanVec,
 };
 
@@ -417,4 +417,98 @@ fn test_verify_disclosure_failure_field_not_in_schema() {
 
     let result = access_control_client.verify_disclosure(&req_id, &disclosed_fields);
     assert!(!result);
+}
+
+#[test]
+fn test_initialize_sets_credential_vault() {
+    let env = Env::default();
+    let (_, _, _, _, _, cred_vault_client, access_control_client) = setup_all(&env);
+
+    assert_eq!(
+        access_control_client.get_credential_vault(),
+        cred_vault_client.address
+    );
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+    let (_, _, _, _, _, cred_vault_client, access_control_client) = setup_all(&env);
+
+    access_control_client.initialize(&cred_vault_client.address);
+}
+
+#[test]
+fn test_request_ids_increment_sequentially() {
+    let env = Env::default();
+    let (_, _, subject, _, _, _, access_control_client) = setup_all(&env);
+    let verifier = Address::generate(&env);
+
+    let mut requested = SorobanVec::new(&env);
+    requested.push_back(Symbol::new(&env, "name"));
+
+    let first = access_control_client.request_proof(&verifier, &subject, &1, &requested);
+    let second = access_control_client.request_proof(&verifier, &subject, &1, &requested);
+
+    assert_eq!(first, 1);
+    assert_eq!(second, 2);
+}
+
+#[test]
+fn test_get_access_request_returns_none_for_unknown_id() {
+    let env = Env::default();
+    let (_, _, _, _, _, _, access_control_client) = setup_all(&env);
+
+    assert!(access_control_client.get_access_request(&999).is_none());
+}
+
+#[test]
+fn test_request_proof_requires_verifier_auth() {
+    let env = Env::default();
+    let (_, _, subject, _, _, _, access_control_client) = setup_all(&env);
+    let verifier = Address::generate(&env);
+
+    let mut requested = SorobanVec::new(&env);
+    requested.push_back(Symbol::new(&env, "name"));
+    access_control_client.request_proof(&verifier, &subject, &1, &requested);
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (auth_address, invocation) = &auths[0];
+    assert_eq!(auth_address, &verifier);
+
+    match &invocation.function {
+        AuthorizedFunction::Contract((address, name, _args)) => {
+            assert_eq!(address, &access_control_client.address);
+            assert_eq!(name, &Symbol::new(&env, "request_proof"));
+        }
+        _ => panic!("unexpected auth function"),
+    }
+}
+
+#[test]
+fn test_grant_access_requires_subject_auth() {
+    let env = Env::default();
+    let (_, _, subject, _, _, _, access_control_client) = setup_all(&env);
+    let verifier = Address::generate(&env);
+
+    let mut requested = SorobanVec::new(&env);
+    requested.push_back(Symbol::new(&env, "name"));
+    let request_id = access_control_client.request_proof(&verifier, &subject, &1, &requested);
+
+    access_control_client.grant_access(&subject, &request_id, &2000);
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (auth_address, invocation) = &auths[0];
+    assert_eq!(auth_address, &subject);
+
+    match &invocation.function {
+        AuthorizedFunction::Contract((address, name, _args)) => {
+            assert_eq!(address, &access_control_client.address);
+            assert_eq!(name, &Symbol::new(&env, "grant_access"));
+        }
+        _ => panic!("unexpected auth function"),
+    }
 }

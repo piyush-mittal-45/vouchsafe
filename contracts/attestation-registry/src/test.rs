@@ -2,7 +2,7 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, AuthorizedFunction, Ledger},
     Address, BytesN, Env, Symbol,
 };
 
@@ -175,4 +175,101 @@ fn test_revoked_attestation_is_invalid() {
 
     // It should now be invalid
     assert!(!client.is_valid(&id));
+}
+
+#[test]
+fn test_initialize_sets_admin() {
+    let env = Env::default();
+    let (admin, _, _, client) = setup_registry(&env);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+    let (admin, _, _, client) = setup_registry(&env);
+
+    client.initialize(&admin);
+}
+
+#[test]
+fn test_attestation_ids_increment_sequentially() {
+    let env = Env::default();
+    let (_, issuer, subject, client) = setup_registry(&env);
+    client.register_issuer(&issuer, &Symbol::new(&env, "Gov"));
+
+    let merkle_root = BytesN::from_array(&env, &[1u8; 32]);
+    let schema_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+    let first = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
+    let second = client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "license"),
+        &merkle_root,
+        &schema_hash,
+        &0,
+    );
+
+    assert_eq!(first, 1);
+    assert_eq!(second, 2);
+}
+
+#[test]
+fn test_register_issuer_requires_admin_auth() {
+    let env = Env::default();
+    let (admin, issuer, _, client) = setup_registry(&env);
+
+    client.register_issuer(&issuer, &Symbol::new(&env, "Gov"));
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (auth_address, invocation) = &auths[0];
+    assert_eq!(auth_address, &admin);
+
+    match &invocation.function {
+        AuthorizedFunction::Contract((address, name, _args)) => {
+            assert_eq!(address, &client.address);
+            assert_eq!(name, &Symbol::new(&env, "register_issuer"));
+        }
+        _ => panic!("unexpected auth function"),
+    }
+}
+
+#[test]
+fn test_issue_attestation_requires_issuer_auth() {
+    let env = Env::default();
+    let (_, issuer, subject, client) = setup_registry(&env);
+    client.register_issuer(&issuer, &Symbol::new(&env, "Gov"));
+
+    client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &0,
+    );
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (auth_address, invocation) = &auths[0];
+    assert_eq!(auth_address, &issuer);
+
+    match &invocation.function {
+        AuthorizedFunction::Contract((address, name, _args)) => {
+            assert_eq!(address, &client.address);
+            assert_eq!(name, &Symbol::new(&env, "issue_attestation"));
+        }
+        _ => panic!("unexpected auth function"),
+    }
 }

@@ -3,7 +3,7 @@
 use super::*;
 use attestation_registry::{AttestationRegistry, AttestationRegistryClient};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, AuthorizedFunction, Ledger},
     Address, BytesN, Env, Symbol, Vec as SorobanVec,
 };
 
@@ -201,4 +201,95 @@ fn test_remove_credential_success() {
 
     // This should panic with "credential metadata not found"
     cred_vault_client.get_credential_meta(&id);
+}
+
+#[test]
+fn test_initialize_sets_registry_address() {
+    let env = Env::default();
+    let (_, _, _, att_reg_client, cred_vault_client) = setup_vault(&env);
+
+    assert_eq!(
+        cred_vault_client.get_attestation_registry(),
+        att_reg_client.address
+    );
+}
+
+#[test]
+#[should_panic(expected = "already initialized")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+    let (_, _, _, att_reg_client, cred_vault_client) = setup_vault(&env);
+
+    cred_vault_client.initialize(&att_reg_client.address);
+}
+
+#[test]
+fn test_credential_ids_increment_sequentially() {
+    let env = Env::default();
+    let (_, issuer, subject, att_reg_client, cred_vault_client) = setup_vault(&env);
+
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &0,
+    );
+
+    let mut field_names = SorobanVec::new(&env);
+    field_names.push_back(Symbol::new(&env, "name"));
+
+    let first = cred_vault_client.store_credential(
+        &subject,
+        &attestation_id,
+        &Symbol::new(&env, "ptr_one"),
+        &field_names,
+    );
+    let second = cred_vault_client.store_credential(
+        &subject,
+        &attestation_id,
+        &Symbol::new(&env, "ptr_two"),
+        &field_names,
+    );
+
+    assert_eq!(first, 1);
+    assert_eq!(second, 2);
+}
+
+#[test]
+fn test_store_credential_requires_subject_auth() {
+    let env = Env::default();
+    let (_, issuer, subject, att_reg_client, cred_vault_client) = setup_vault(&env);
+
+    let attestation_id = att_reg_client.issue_attestation(
+        &issuer,
+        &subject,
+        &Symbol::new(&env, "passport"),
+        &BytesN::from_array(&env, &[1u8; 32]),
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &0,
+    );
+
+    let mut field_names = SorobanVec::new(&env);
+    field_names.push_back(Symbol::new(&env, "name"));
+    cred_vault_client.store_credential(
+        &subject,
+        &attestation_id,
+        &Symbol::new(&env, "ptr"),
+        &field_names,
+    );
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    let (auth_address, invocation) = &auths[0];
+    assert_eq!(auth_address, &subject);
+
+    match &invocation.function {
+        AuthorizedFunction::Contract((address, name, _args)) => {
+            assert_eq!(address, &cred_vault_client.address);
+            assert_eq!(name, &Symbol::new(&env, "store_credential"));
+        }
+        _ => panic!("unexpected auth function"),
+    }
 }
