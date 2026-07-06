@@ -5,7 +5,7 @@
 [![Soroban](https://img.shields.io/badge/Soroban-Rust-orange?logo=rust&logoColor=white)](https://soroban.stellar.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
 
-**Live Demo:** https://vouchsafe-123.armed-flop-danger.workers.dev
+**Live Demo:** https://vouchsafe.armed-flop-danger.workers.dev
 
 **Demo Video (1–2 min):** [media/video.mp4](media/video.mp4)
 
@@ -285,7 +285,7 @@ CI runs both suites on every push (see badge above), plus `cargo fmt --check`, `
 
 ## Live Demo
 
-**https://vouchsafe-123.armed-flop-danger.workers.dev** — static export served from Cloudflare Workers, wired to the Testnet contracts above. Use Freighter set to **Test Net** with a Friendbot-funded account.
+**https://vouchsafe.armed-flop-danger.workers.dev** — static export served from Cloudflare Workers, wired to the Testnet contracts above. Use Freighter set to **Test Net** with a Friendbot-funded account.
 
 ---
 
