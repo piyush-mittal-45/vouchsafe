@@ -510,9 +510,6 @@ export default function ClientHome() {
         throw new Error('Could not read attestation id from issue_attestation transaction.');
       }
 
-      const nextCredId = credentials.length + 1;
-      await storeEncryptedCredential(nextCredId, credData, encryptionKey);
-
       const storeXdr = await buildTransaction(
         publicKey,
         VAULT_ID,
@@ -520,7 +517,7 @@ export default function ClientHome() {
         [
           { value: publicKey, type: 'address' },
           nativeToScVal(attestationId, { type: 'u64' }),
-          nativeToScVal(nextCredId.toString(), { type: 'symbol' }),
+          nativeToScVal('indexeddb', { type: 'symbol' }),
           nativeToScVal(['full_name', 'date_of_birth', 'license_class'])
         ]
       );
@@ -528,7 +525,16 @@ export default function ClientHome() {
         networkPassphrase: Networks.TESTNET,
         address: publicKey
       });
-      await submitTransaction(signedStoreXdr.signedTxXdr);
+      const storeTxHash = await submitTransaction(signedStoreXdr.signedTxXdr);
+
+      // store_credential returns the (global) on-chain credential id; the
+      // encrypted payload must be keyed by it so access requests (which
+      // reference the on-chain id) can find the local data at approval time
+      const chainCredId = await getTransactionReturnValue(storeTxHash);
+      if (chainCredId === null || chainCredId === undefined) {
+        throw new Error('Could not read credential id from store_credential transaction.');
+      }
+      await storeEncryptedCredential(Number(chainCredId), credData, encryptionKey);
 
       alert('Credential successfully encrypted, stored locally in IndexedDB, and metadata registered on-chain!');
       await updateData();
