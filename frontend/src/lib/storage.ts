@@ -50,7 +50,7 @@ export async function deriveKeyFromSignature(signatureHex: string): Promise<Cryp
 // Encrypt and store credential data in IndexedDB
 export async function storeEncryptedCredential(
   credentialId: number,
-  rawPayload: any,
+  rawPayload: unknown,
   key: CryptoKey
 ): Promise<void> {
   const db = await getDB();
@@ -82,13 +82,13 @@ export async function storeEncryptedCredential(
 }
 
 // Get and decrypt credential data from IndexedDB
-export async function getDecryptedCredential(
+export async function getDecryptedCredential<T = unknown>(
   credentialId: number,
   key: CryptoKey
-): Promise<any | null> {
+): Promise<T | null> {
   const db = await getDB();
-  
-  const record: any = await new Promise((resolve, reject) => {
+
+  const record = await new Promise<{ iv: string; ciphertext: string } | undefined>((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readonly');
     const store = transaction.objectStore(STORE_NAME);
     const getRequest = store.get(credentialId);

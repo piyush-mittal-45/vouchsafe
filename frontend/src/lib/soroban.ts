@@ -36,7 +36,9 @@ export async function getXlmBalance(address: string): Promise<string> {
     const res = await fetch(`${HORIZON_URL}/accounts/${address}`);
     if (!res.ok) return '0.0';
     const data = await res.json();
-    const balance = data.balances.find((b: any) => b.asset_type === 'native');
+    const balance = data.balances.find(
+      (b: { asset_type: string; balance: string }) => b.asset_type === 'native'
+    );
     return balance ? parseFloat(balance.balance).toFixed(2) : '0.0';
   } catch (err) {
     console.error(err);
@@ -63,8 +65,15 @@ export function computeParent(a: Buffer, b: Buffer): Buffer {
   return sha256(concat);
 }
 
+// A contract call argument: a prepared ScVal, a { value, type } descriptor, or a
+// plain value (e.g. Buffer) that nativeToScVal can convert directly
+export type ContractParam =
+  | xdr.ScVal
+  | { value: string; type: 'address' | 'symbol' | 'string' | 'bytes' | 'u32' | 'i32' | 'u64' | 'i64' | 'u128' | 'i128' }
+  | Buffer;
+
 // Accept either a ready xdr.ScVal or a plain { value, type } descriptor
-function normalizeParam(param: any): xdr.ScVal {
+function normalizeParam(param: ContractParam): xdr.ScVal {
   if (param instanceof xdr.ScVal) return param;
   if (param && typeof param === 'object' && 'value' in param && typeof param.type === 'string') {
     return nativeToScVal(param.value, { type: param.type });
@@ -77,7 +86,7 @@ export async function buildTransaction(
   sourceAddress: string,
   contractId: string,
   methodName: string,
-  params: any[]
+  params: ContractParam[]
 ): Promise<string> {
   const account = await getSourceAccount(sourceAddress);
   const contract = new Contract(contractId);
@@ -179,7 +188,7 @@ export async function submitTransaction(xdrString: string): Promise<string> {
 }
 
 // Fetch the decoded return value of a completed transaction
-export async function getTransactionReturnValue(hash: string): Promise<any> {
+export async function getTransactionReturnValue(hash: string): Promise<unknown> {
   const serverUrl = 'https://soroban-testnet.stellar.org';
   const response = await fetch(serverUrl, {
     method: 'POST',
@@ -201,16 +210,16 @@ export async function getTransactionReturnValue(hash: string): Promise<any> {
   if (meta.switch() === 3) {
     retval = meta.v3().sorobanMeta()?.returnValue();
   } else if (meta.switch() === 4) {
-    retval = (meta as any).v4().sorobanMeta()?.returnValue();
+    retval = meta.v4().sorobanMeta()?.returnValue();
   }
   return retval ? scValToNative(retval) : null;
 }
 
-export async function invokeReadOnly(
+export async function invokeReadOnly<T = unknown>(
   contractId: string,
   methodName: string,
-  params: any[]
-): Promise<any> {
+  params: ContractParam[]
+): Promise<T | null> {
   const contract = new Contract(contractId);
   const dummyAccount = new Account('GAKF7GXDBJS2MMMVFHE4UNEKXJM3BABM3DQCSTF3JKRKN5WZI4GW4TIV', '0');
   
@@ -315,10 +324,17 @@ export async function getLatestLedger(): Promise<number> {
   return result.result?.sequence || 0;
 }
 
+// Shape of an event entry returned by the getEvents RPC method
+export interface ContractEvent {
+  id: string;
+  topic: string[];
+  ledgerClosedAt?: string;
+}
+
 export async function getContractEvents(
   contractId: string,
   startLedger: number
-): Promise<any[]> {
+): Promise<ContractEvent[]> {
   const serverUrl = 'https://soroban-testnet.stellar.org';
   const response = await fetch(serverUrl, {
     method: 'POST',

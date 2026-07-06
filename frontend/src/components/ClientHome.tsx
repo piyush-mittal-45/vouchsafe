@@ -31,6 +31,57 @@ import {
   getDecryptedCredential
 } from '../lib/storage';
 
+interface CredentialItem {
+  id: number;
+  attestationId: number;
+  pointer: string;
+  fieldNames: string[];
+  createdAt: string;
+  isValid: boolean;
+}
+
+interface AccessRequest {
+  id: number;
+  verifier: string;
+  subject: string;
+  credentialId: number;
+  requestedFields: string[];
+  status: string;
+  expiry: number;
+}
+
+interface DisclosureEvent {
+  id: string;
+  requestId: number;
+  verifier: string;
+  field: string;
+  timestamp: string;
+}
+
+// Field disclosure payload persisted for the verifier (hex-encoded)
+interface DisclosedField {
+  name: string;
+  value: string;
+  salt: string;
+  proof: string[];
+}
+
+// Plaintext credential payload stored encrypted in IndexedDB
+interface StoredCredential {
+  fullName: string;
+  dob: string;
+  licenseClass: string;
+  salt0: string;
+  salt1: string;
+  salt2: string;
+  leaf0: string;
+  leaf1: string;
+  leaf2: string;
+  parent0: string;
+  parent1: string;
+  root: string;
+}
+
 export default function ClientHome() {
   const [publicKey, setPublicKey] = useState<string>('');
   const [balance, setBalance] = useState<string>('0.0');
@@ -64,12 +115,12 @@ export default function ClientHome() {
   const [reqLicenseClass, setReqLicenseClass] = useState<boolean>(false);
 
   // Loaded data
-  const [credentials, setCredentials] = useState<any[]>([]);
-  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
-  const [sentRequests, setSentRequests] = useState<any[]>([]);
-  
+  const [credentials, setCredentials] = useState<CredentialItem[]>([]);
+  const [pendingRequests, setPendingRequests] = useState<AccessRequest[]>([]);
+  const [sentRequests, setSentRequests] = useState<AccessRequest[]>([]);
+
   // Real-time activity feed driven by events
-  const [activityFeed, setActivityFeed] = useState<any[]>([]);
+  const [activityFeed, setActivityFeed] = useState<DisclosureEvent[]>([]);
   const lastPolledLedgerRef = useRef<number>(0);
 
   // Wallet detection (null = not yet checked)
@@ -124,19 +175,20 @@ export default function ClientHome() {
               try {
                 const parsedTopic = ev.topic.map((t: string) => scValToNative(xdr.ScVal.fromXDR(t, 'base64')));
                 if (parsedTopic[0] === 'disclosure') {
-                  return {
+                  const parsed: DisclosureEvent = {
                     id: ev.id,
                     requestId: Number(parsedTopic[1]),
-                    verifier: parsedTopic[2],
-                    field: parsedTopic[3],
+                    verifier: String(parsedTopic[2]),
+                    field: String(parsedTopic[3]),
                     timestamp: new Date(ev.ledgerClosedAt || Date.now()).toLocaleTimeString()
                   };
+                  return parsed;
                 }
               } catch (e) {
                 console.error('Failed to parse event:', e);
               }
               return null;
-            }).filter(Boolean);
+            }).filter((ev): ev is DisclosureEvent => ev !== null);
             
             if (parsedEvents.length > 0) {
               setActivityFeed(prev => [...parsedEvents, ...prev].slice(0, 30));
@@ -152,18 +204,19 @@ export default function ClientHome() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleException = (err: any) => {
+  const handleException = (err: unknown) => {
     console.error("Handled exception:", err);
-    
+
     // 1. Check if wallet missing (walletDetected is null until the first check completes)
     const isWalletInstalled = walletDetected !== false;
 
     // 2. Check if user rejected signature
-    const errMsg = err?.message || JSON.stringify(err) || "";
-    const isRejected = errMsg.toLowerCase().includes('cancel') || 
-                       errMsg.toLowerCase().includes('reject') || 
-                       errMsg.toLowerCase().includes('user close') || 
-                       err.code === -1;
+    const errObj = err as { message?: string; code?: number } | null | undefined;
+    const errMsg = errObj?.message || JSON.stringify(err) || "";
+    const isRejected = errMsg.toLowerCase().includes('cancel') ||
+                       errMsg.toLowerCase().includes('reject') ||
+                       errMsg.toLowerCase().includes('user close') ||
+                       errObj?.code === -1;
 
     // 3. Check if insufficient balance (minimum 2.0 XLM for fees)
     const xlm = parseFloat(balance);
@@ -218,7 +271,7 @@ export default function ClientHome() {
       setLoadingText('Step 2/2: Deriving AES key and opening vault...');
       const derivedKey = await deriveKeyFromSignature(signRes.signedMessage);
       setEncryptionKey(derivedKey);
-    } catch (err: any) {
+    } catch (err) {
       handleException(err);
       disconnectWallet();
     } finally {
@@ -283,7 +336,7 @@ export default function ClientHome() {
   const disconnectWallet = async () => {
     try {
       await StellarWalletsKit.disconnect();
-    } catch (e) {}
+    } catch {}
     setPublicKey('');
     setBalance('0.0');
     setCredentials([]);
@@ -296,23 +349,29 @@ export default function ClientHome() {
   const loadCredentials = async () => {
     if (!publicKey) return;
     try {
-      const ids: any[] = await invokeReadOnly(VAULT_ID, 'list_credentials', [
+      const ids = await invokeReadOnly<Array<number | bigint>>(VAULT_ID, 'list_credentials', [
         { value: publicKey, type: 'address' }
       ]);
-      
+
       if (!ids || ids.length === 0) {
         setCredentials([]);
         return;
       }
 
-      const list = [];
+      const list: CredentialItem[] = [];
       for (const idVal of ids) {
         const id = Number(idVal);
-        const meta = await invokeReadOnly(VAULT_ID, 'get_credential_meta', [
+        const meta = await invokeReadOnly<{
+          attestation_id: number | bigint;
+          pointer: string;
+          field_names: string[];
+          created_at: number | bigint;
+        }>(VAULT_ID, 'get_credential_meta', [
           nativeToScVal(id, { type: 'u64' })
         ]);
-        
-        const isValid = await invokeReadOnly(REGISTRY_ID, 'is_valid', [
+        if (!meta) continue;
+
+        const isValid = await invokeReadOnly<boolean>(REGISTRY_ID, 'is_valid', [
           nativeToScVal(meta.attestation_id, { type: 'u64' })
         ]);
 
@@ -322,7 +381,7 @@ export default function ClientHome() {
           pointer: meta.pointer,
           fieldNames: meta.field_names,
           createdAt: new Date(Number(meta.created_at) * 1000).toLocaleDateString(),
-          isValid
+          isValid: Boolean(isValid)
         });
       }
       setCredentials(list);
@@ -335,15 +394,22 @@ export default function ClientHome() {
   const loadRequests = async () => {
     if (!publicKey) return;
     try {
-      const pending = [];
-      const sent = [];
+      const pending: AccessRequest[] = [];
+      const sent: AccessRequest[] = [];
       for (let i = 1; i <= 10; i++) {
         try {
-          const req = await invokeReadOnly(ACCESS_ID, 'get_access_request', [
+          const req = await invokeReadOnly<{
+            verifier: string;
+            subject: string;
+            credential_id: number | bigint;
+            requested_fields: string[];
+            status: string;
+            expiry: number | bigint;
+          }>(ACCESS_ID, 'get_access_request', [
             nativeToScVal(i, { type: 'u64' })
           ]);
           if (req) {
-            const formatted = {
+            const formatted: AccessRequest = {
               id: i,
               verifier: req.verifier,
               subject: req.subject,
@@ -359,7 +425,7 @@ export default function ClientHome() {
               sent.push(formatted);
             }
           }
-        } catch (e) {
+        } catch {
           // ignore not found
         }
       }
@@ -466,7 +532,7 @@ export default function ClientHome() {
 
       alert('Credential successfully encrypted, stored locally in IndexedDB, and metadata registered on-chain!');
       await updateData();
-    } catch (err: any) {
+    } catch (err) {
       handleException(err);
     } finally {
       setLoading(false);
@@ -504,7 +570,7 @@ export default function ClientHome() {
       await submitTransaction(signed.signedTxXdr);
       alert('Access request submitted successfully!');
       await updateData();
-    } catch (err: any) {
+    } catch (err) {
       handleException(err);
     } finally {
       setLoading(false);
@@ -512,7 +578,7 @@ export default function ClientHome() {
   };
 
   // Subject: Grant Request
-  const grantAccess = async (request: any) => {
+  const grantAccess = async (request: AccessRequest) => {
     if (!publicKey) return;
     if (!encryptionKey) {
       alert('Vault encryption key not established.');
@@ -521,14 +587,14 @@ export default function ClientHome() {
     try {
       setLoading(true);
       setLoadingText('Step 1/3: Decrypting local database values...');
-      
-      const decrypted = await getDecryptedCredential(request.credentialId, encryptionKey);
+
+      const decrypted = await getDecryptedCredential<StoredCredential>(request.credentialId, encryptionKey);
       if (!decrypted) {
         throw new Error('Credential not found in secure local IndexedDB database.');
       }
 
       setLoadingText('Step 2/3: Constructing selective disclosure proofs...');
-      const disclosedList = [];
+      const disclosedList: DisclosedField[] = [];
       for (const field of request.requestedFields) {
         if (field === 'full_name') {
           disclosedList.push({
@@ -575,7 +641,7 @@ export default function ClientHome() {
       await submitTransaction(signed.signedTxXdr);
       alert('Access granted and selective disclosure payload securely prepared!');
       await updateData();
-    } catch (err: any) {
+    } catch (err) {
       handleException(err);
     } finally {
       setLoading(false);
@@ -583,7 +649,7 @@ export default function ClientHome() {
   };
 
   // Verifier: Verify
-  const verifyRequest = async (request: any, tampered: boolean = false) => {
+  const verifyRequest = async (request: AccessRequest, tampered: boolean = false) => {
     if (!publicKey) return;
     try {
       setLoading(true);
@@ -594,15 +660,15 @@ export default function ClientHome() {
         throw new Error('Disclosed data not found. Has the subject approved the request?');
       }
       
-      let disclosed = JSON.parse(savedDisclosures);
+      let disclosed: DisclosedField[] = JSON.parse(savedDisclosures);
       if (tampered) {
-        disclosed = disclosed.map((d: any) => ({
+        disclosed = disclosed.map((d) => ({
           ...d,
           salt: '0000000000000000000000000000000000000000000000000000000000000000'
         }));
       }
 
-      const disclosedParams = disclosed.map((d: any) => ({
+      const disclosedParams = disclosed.map((d) => ({
         name: d.name,
         value: Buffer.from(d.value, 'hex'),
         salt: Buffer.from(d.salt, 'hex'),
@@ -621,17 +687,17 @@ export default function ClientHome() {
       }
 
       setLoadingText('Step 2/2: Verifying Merkle paths on-chain...');
-      const isValid = await invokeReadOnly(ACCESS_ID, 'verify_disclosure', [
+      const isValid = await invokeReadOnly<boolean>(ACCESS_ID, 'verify_disclosure', [
         nativeToScVal(request.id, { type: 'u64' }),
         nativeToScVal(disclosedParams)
       ]);
 
       setVerifiedResult({
         show: true,
-        valid: isValid,
+        valid: Boolean(isValid),
         details: isValid ? 'VERIFIED SUCCESS' : 'VERIFICATION FAILED'
       });
-    } catch (err: any) {
+    } catch (err) {
       handleException(err);
     } finally {
       setLoading(false);
@@ -705,7 +771,7 @@ export default function ClientHome() {
                   <div className="break-all sm:break-normal">
                     <span className="text-green-700 font-bold">🟢 DISCLOSURE:</span>{' '}
                     Verifier <span className="text-gray-900 font-semibold">{event.verifier.slice(0, 8)}...{event.verifier.slice(-8)}</span> verified field{' '}
-                    <span className="text-[#851C1C] font-bold">"{event.field}"</span> on Request{' '}
+                    <span className="text-[#851C1C] font-bold">&quot;{event.field}&quot;</span> on Request{' '}
                     <span className="font-bold text-gray-900">#{event.requestId}</span>
                   </div>
                   <div className="text-gray-400 text-[9px] sm:text-[10px]">{event.timestamp}</div>
