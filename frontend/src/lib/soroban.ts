@@ -13,10 +13,10 @@ import {
 import cryptoBrowser from 'crypto';
 import { Buffer } from 'buffer';
 
-// Contract addresses from env vars
-export const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || '';
-export const VAULT_ID = process.env.NEXT_PUBLIC_VAULT_ID || '';
-export const ACCESS_ID = process.env.NEXT_PUBLIC_ACCESS_ID || '';
+// Deployed Testnet contract addresses (public); env vars can override them
+export const REGISTRY_ID = process.env.NEXT_PUBLIC_REGISTRY_ID || 'CDPHPDGZTO35WUEZSY6MO6EYNE4J323NANZRAIZIFGKEDGEIR6BAQEG3';
+export const VAULT_ID = process.env.NEXT_PUBLIC_VAULT_ID || 'CB7LCLRBAVDKEUU727CFYXO7WQNHHHGRW4UXXFFYZXPYUVK3VXXDBZY3';
+export const ACCESS_ID = process.env.NEXT_PUBLIC_ACCESS_ID || 'CDY2F43CTJZ5T74CXZHRNTDZZWI62GK5BWV3VMV2ADHLR74SQ73RX3XT';
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 
