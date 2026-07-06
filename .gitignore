@@ -12,3 +12,8 @@ out/
 
 # OS
 .DS_Store
+
+# Temporary files
+audit.md
+scratch/
+
