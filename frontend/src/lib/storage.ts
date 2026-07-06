@@ -36,7 +36,7 @@ function getDB(): Promise<IDBDatabase> {
 
 // Derive AES-GCM Key from signature using SHA-256
 export async function deriveKeyFromSignature(signatureHex: string): Promise<CryptoKey> {
-  const signatureBytes = Buffer.from(signatureHex, 'hex');
+  const signatureBytes = new Uint8Array(Buffer.from(signatureHex, 'hex'));
   const hash = await window.crypto.subtle.digest('SHA-256', signatureBytes);
   return await window.crypto.subtle.importKey(
     'raw',
@@ -61,7 +61,7 @@ export async function storeEncryptedCredential(
   const ciphertextBuffer = await window.crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
     key,
-    encoded
+    new Uint8Array(encoded)
   );
   
   const ciphertextHex = Buffer.from(ciphertextBuffer).toString('hex');
@@ -99,9 +99,9 @@ export async function getDecryptedCredential(
   
   if (!record) return null;
   
-  const iv = Buffer.from(record.iv, 'hex');
-  const ciphertext = Buffer.from(record.ciphertext, 'hex');
-  
+  const iv = new Uint8Array(Buffer.from(record.iv, 'hex'));
+  const ciphertext = new Uint8Array(Buffer.from(record.ciphertext, 'hex'));
+
   try {
     const decryptedBuffer = await window.crypto.subtle.decrypt(
       { name: 'AES-GCM', iv },
