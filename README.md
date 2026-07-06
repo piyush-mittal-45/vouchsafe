@@ -235,9 +235,7 @@ test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ---
 
-## 10. Live Demo
-
-- **Live URL:** PENDING — generate after hosting/deployment.
+- **Live URL:** [VouchSafe Live Demo](https://vouchsafe-123.armed-flop-danger.workers.dev/)
 
 ---
 
