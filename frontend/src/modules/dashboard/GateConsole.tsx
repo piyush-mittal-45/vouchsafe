@@ -488,8 +488,8 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
       let savedDisclosures = localStorage.getItem(`disclosures_${request.id}`);
       console.log(`Retrieved disclosures:`, savedDisclosures);
       if (!savedDisclosures) {
-        // Attempt to auto-approve/auto-disclose on the fly for demo/test flow
         try {
+          if (!encryptionKey) throw new Error("Local vault decryption key is missing.");
           const decrypted = await getDecryptedCredential<any>(request.credentialId, encryptionKey);
           if (decrypted) {
             const disclosedList: any[] = [];
