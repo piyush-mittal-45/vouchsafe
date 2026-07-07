@@ -1,304 +1,206 @@
-# VouchSafe — Self-Sovereign Identity Attestation Vault
+# VouchSafe — Cryptographic Credentials & Verification Shield
 
 [![CI](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml/badge.svg)](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml)
 [![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-7B61FF?logo=stellar&logoColor=white)](https://stellar.expert/explorer/testnet)
 [![Soroban](https://img.shields.io/badge/Soroban-Rust-orange?logo=rust&logoColor=white)](https://soroban.stellar.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
 
-**Live Demo:** https://vouchsafe.armed-flop-danger.workers.dev
+**Live Demo:** https://vouchsafe-123.armed-flop-danger.workers.dev
+> ⚠️ The currently-deployed build still serves the previous **"VouchSafe"** branding and an earlier set of contract IDs. It will reflect the VouchSafe branding and the contract addresses documented below only after the next `git push` triggers a fresh Cloudflare build. See [Known Gaps](#known-gaps--pending-items).
 
 **Demo Video (1–2 min):** [media/video.mp4](media/video.mp4)
+> ⚠️ The recorded video shows the previous "VouchSafe" branding and older contracts; a re-recording against the current VouchSafe build is a pending manual task.
 
 ---
 
 ## Project Description
 
-VouchSafe is a decentralized self-sovereign identity (SSI) credential vault built on the Stellar Soroban network. It enables secure issuing, storing, and selective disclosure verification of identity attestations.
+VouchSafe is a decentralized self-sovereign identity (SSI) credential vault built on the Stellar Soroban network. Trusted issuers publish **salted Merkle commitments** of a subject's identity attributes on-chain; the subject stores the credential metadata in their vault; and a verifier can request **selective disclosure** of specific fields. The subject reveals only the chosen fields plus a Merkle proof, and the on-chain verifier confirms the proof against the issuer's committed root — without the raw attribute values ever being stored on-chain.
 
-Subjects keep ownership of their identity documents (passports, academic degrees, driver's licenses) while third-party verifiers validate specific assertions (e.g. a name or date of birth) **without ever seeing the undisclosed fields**. Raw values never touch the chain: only salted Merkle commitments are stored on-chain, and the plaintext credential lives AES-GCM-encrypted in the subject's own browser (IndexedDB), with the encryption key derived from a wallet signature.
-
----
+Raw attribute values are encrypted client-side (AES-GCM, key derived from a wallet signature) and stored only in the browser's IndexedDB; the chain holds nothing but commitments.
 
 ## Architecture
 
-VouchSafe uses a three-contract architecture where attestations, user metadata, and access permissions are segregated into specialized modules:
+Three specialized Soroban contracts form a single wired chain — **VouchGate → VouchVault → VouchRegistry**:
 
 ```
-                  ┌──────────────────────┐
-                  │  AttestationRegistry │ (Source of truth for Merkle roots)
-                  └──────────▲───────────┘
-                             │
-                             │ env.invoke_contract
-                             │
-                  ┌──────────┴───────────┐
-                  │    CredentialVault   │ (Subject-owned metadata index)
-                  └──────────▲───────────┘
-                             │
-                             │ env.invoke_contract
-                             │
-                  ┌──────────┴───────────┐
-                  │     AccessControl    │ (Verifier requests & grants)
-                  └──────────────────────┘
+                        ┌──────────────────────────────────────┐
+                        │  Frontend (Next.js, static export)    │
+                        │  Freighter / stellar-wallets-kit      │
+                        └───────────────┬──────────────────────┘
+                                        │ sign + submit (Soroban RPC)
+        ┌───────────────────────────────┼───────────────────────────────┐
+        ▼                               ▼                               ▼
+┌────────────────┐   invoke   ┌────────────────┐   invoke   ┌────────────────┐
+│   VouchGate    │──────────▶ │   VouchVault   │──────────▶ │ VouchRegistry  │
+│ proof requests │            │ credential meta│            │ attestations / │
+│ + verification │◀────────── │ + ownership    │◀────────── │ Merkle roots   │
+└────────────────┘  results   └────────────────┘  results   └────────────────┘
 ```
 
-1. **AttestationRegistry** — stores issuer registrations and Merkle-root commitments; the root authority.
-2. **CredentialVault** — a subject-owned index of credential metadata. Before storing, it calls the `AttestationRegistry` to check the referenced attestation is valid and belongs to the subject.
-3. **AccessControl** — handles proof requests from verifiers and grants from subjects, and performs the complete on-chain selective disclosure verification.
-
-### End-to-End Sequence Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Issuer as Identity Issuer
-    actor Subject as Identity Subject
-    actor Verifier as Proof Verifier
-    participant AC as AccessControl Contract
-    participant CV as CredentialVault Contract
-    participant AR as AttestationRegistry Contract
-
-    Issuer->>AR: register_issuer(issuer_address, name)
-    Issuer->>AR: issue_attestation(issuer, subject, type, merkle_root, schema_hash, expiry)
-    Note over AR: Generates attestation_id (e.g., 1)
-
-    Subject->>CV: store_credential(subject, attestation_id, pointer, field_names)
-    CV->>AR: is_valid(attestation_id)
-    AR-->>CV: true
-    CV->>AR: get_attestation(attestation_id)
-    AR-->>CV: attestation data (verifies subject matches)
-    Note over CV: Stores metadata & assigns credential_id (e.g., 1)
-
-    Verifier->>AC: request_proof(verifier, subject, credential_id, requested_fields)
-    Note over AC: Creates request_id (e.g., 1) with status 'pending'
-
-    Subject->>AC: grant_access(subject, request_id, expiry)
-    Note over AC: Updates status to 'granted'
-
-    Verifier->>AC: verify_disclosure(request_id, disclosed_fields)
-    AC->>CV: get_credential_meta(credential_id)
-    CV-->>AC: credential_meta (contains attestation_id & field names)
-    AC->>AR: get_attestation(attestation_id)
-    AR-->>AC: attestation data (contains merkle_root, revoked status)
-    Note over AC: Verifies each disclosed field against Merkle root via proofs
-    AC-->>Verifier: returns true (verified) or false (failed)
-```
-
----
+- **VouchRegistry** — issuer (endorser) authorization, attestation (`VouchRecord`) storage, Merkle root of committed attributes, revocation.
+- **VouchVault** — per-subject credential metadata; on deposit it *calls into the registry* to validate the attestation and confirm the subject.
+- **VouchGate** — proof requests, approvals, and selective-disclosure verification; on verification it *chains calls through the vault and registry* to fetch metadata and the committed root, then re-derives the Merkle proof on-chain.
 
 ## Tech Stack
 
 | Layer | Technology |
 | --- | --- |
-| Smart contracts | Rust + Soroban SDK (three contracts, workspace build) |
-| Contract target | `wasm32v1-none` |
-| Frontend | Next.js 14 (static export), React 18, TypeScript 5, Tailwind CSS |
-| Wallet | Freighter via `@creit.tech/stellar-wallets-kit` |
-| Chain access | Soroban RPC (`soroban-testnet.stellar.org`) + Horizon |
-| Client-side storage | IndexedDB + WebCrypto AES-GCM (key derived from wallet signature) |
-| CI/CD | GitHub Actions (tests, fmt, clippy, WASM build, lint, type-check, jest, static export) |
-| Hosting | Cloudflare Workers (static assets) |
-
----
+| Smart contracts | Rust, `soroban-sdk` 22, compiled to `wasm32v1-none` |
+| On-chain crypto | SHA-256 leaves, sorted-pair Merkle trees, `env.crypto().sha256` |
+| Frontend | Next.js 14 (App Router, static export), TypeScript, Tailwind CSS |
+| Wallet | `@creit.tech/stellar-wallets-kit` (Freighter) |
+| Client crypto | Web Crypto AES-GCM, key derived from wallet signature |
+| Network | Stellar Testnet (Horizon + Soroban RPC) |
+| CI/CD | GitHub Actions (Rust + frontend jobs), Cloudflare Pages/Workers |
 
 ## Smart Contracts (Testnet)
 
-| Contract | Address | Stellar Expert Link |
+All three contracts were deployed from the current contract source and initialized as one wired chain (Gate → Vault → Registry). Admin / deployer account: `GDQQP5KLFGAA2SHYYQ35KLU5H7JPNQDVTCCILA5FQE2DFGOLZATDL5M4`.
+
+| Contract | Address | Stellar Expert |
 | --- | --- | --- |
-| **AttestationRegistry** | `CDPHPDGZTO35WUEZSY6MO6EYNE4J323NANZRAIZIFGKEDGEIR6BAQEG3` | [View on stellar.expert](https://stellar.expert/explorer/testnet/contract/CDPHPDGZTO35WUEZSY6MO6EYNE4J323NANZRAIZIFGKEDGEIR6BAQEG3) |
-| **CredentialVault** | `CB7LCLRBAVDKEUU727CFYXO7WQNHHHGRW4UXXFFYZXPYUVK3VXXDBZY3` | [View on stellar.expert](https://stellar.expert/explorer/testnet/contract/CB7LCLRBAVDKEUU727CFYXO7WQNHHHGRW4UXXFFYZXPYUVK3VXXDBZY3) |
-| **AccessControl** | `CDY2F43CTJZ5T74CXZHRNTDZZWI62GK5BWV3VMV2ADHLR74SQ73RX3XT` | [View on stellar.expert](https://stellar.expert/explorer/testnet/contract/CDY2F43CTJZ5T74CXZHRNTDZZWI62GK5BWV3VMV2ADHLR74SQ73RX3XT) |
+| **VouchRegistry** | `CBML5ICVVEU4QWWWAPHMNF3RG2QSP7YENUKUTW5H6KBQ2T6ZRFLO3NUE` | [View](https://stellar.expert/explorer/testnet/contract/CBML5ICVVEU4QWWWAPHMNF3RG2QSP7YENUKUTW5H6KBQ2T6ZRFLO3NUE) |
+| **VouchVault** | `CCMNCGRMMBWSSAPMJT6SOBRKYEYL5VHISP3PMOLT6QDTHAALM42JS4IQ` | [View](https://stellar.expert/explorer/testnet/contract/CCMNCGRMMBWSSAPMJT6SOBRKYEYL5VHISP3PMOLT6QDTHAALM42JS4IQ) |
+| **VouchGate** | `CBCFYEZT4VXKIRIVDA2LEVMFGRQMTBK4COCRFSRRLJSYCQ3DBR3WXN4N` | [View](https://stellar.expert/explorer/testnet/contract/CBCFYEZT4VXKIRIVDA2LEVMFGRQMTBK4COCRFSRRLJSYCQ3DBR3WXN4N) |
 
-### Deployment workflow (reproducible)
-
-```bash
-# 1. Build the WASM binaries
-cargo build --workspace --target wasm32v1-none --release
-
-# 2. Deploy each contract (Stellar CLI, testnet)
-stellar contract deploy --wasm target/wasm32v1-none/release/attestation_registry.wasm --network testnet --source <DEPLOYER>
-stellar contract deploy --wasm target/wasm32v1-none/release/credential_vault.wasm     --network testnet --source <DEPLOYER>
-stellar contract deploy --wasm target/wasm32v1-none/release/access_control.wasm       --network testnet --source <DEPLOYER>
-
-# 3. Initialize, in dependency order
-stellar contract invoke --id <REGISTRY_ID> -- initialize --admin <ADMIN_ADDRESS>
-stellar contract invoke --id <VAULT_ID>    -- initialize --attestation_registry <REGISTRY_ID>
-stellar contract invoke --id <ACCESS_ID>   -- initialize --credential_vault <VAULT_ID>
-```
-
-A scripted equivalent (deploy + initialize + full E2E flow) lives in [scratch/deploy_and_test.js](scratch/deploy_and_test.js) — it is the script that produced the transaction evidence below.
-
----
+On-chain wiring (verifiable via read-only calls):
+`VouchGate.fetch_vault_address()` → VouchVault · `VouchVault.fetch_registry_address()` → VouchRegistry.
 
 ## Inter-Contract Calls
 
-Inter-contract calls in Soroban are executed using **`env.invoke_contract`**. VouchSafe's verification path is a chained **two-hop execution sequence** across all three contracts:
+Inter-contract calls in Soroban are executed with **`env.invoke_contract`**. VouchSafe uses two genuine cross-contract paths, both executed and verified on Testnet.
 
-```
-AccessControl.verify_disclosure()
-       │
-       ▼ (env.invoke_contract)
-CredentialVault.get_credential_meta() / get_attestation_registry()
-       │
-       ▼ (env.invoke_contract)
-AttestationRegistry.get_attestation()
+**1. Credential deposit — `VouchVault.lock_credential` → VouchRegistry (2 calls)**
+Before accepting a credential, the vault calls the registry twice:
+```rust
+// contracts/vouch-vault/src/lib.rs
+let is_valid: bool = env.invoke_contract(&registry, &symbol!("check_vouch_validity"), args);
+let attestation: VouchRecord = env.invoke_contract(&registry, &symbol!("fetch_vouch"), args);
 ```
 
-- When the verifier invokes `AccessControl.verify_disclosure()`, the contract calls `CredentialVault.get_credential_meta()` via `env.invoke_contract` to retrieve the credential's attestation id and field schema ([contracts/access-control/src/lib.rs](contracts/access-control/src/lib.rs)).
-- It then resolves the registry address from the vault and calls `AttestationRegistry.get_attestation()` to fetch the Merkle root and revocation status.
-- `CredentialVault.store_credential()` also performs two `env.invoke_contract` calls into the registry (`is_valid`, `get_attestation`) before accepting a credential ([contracts/credential-vault/src/lib.rs](contracts/credential-vault/src/lib.rs)).
+**2. Selective-disclosure verification — `VouchGate.authenticate_proof` → VouchVault → VouchRegistry (2-hop)**
+```rust
+// contracts/vouch-gate/src/lib.rs
+let credential: SecureCredential = env.invoke_contract(&vault, &symbol!("fetch_credential_details"), args);
+let registry: Address       = env.invoke_contract(&vault, &symbol!("fetch_registry_address"), args);
+let attestation: VouchRecord = env.invoke_contract(&registry, &symbol!("fetch_vouch"), args);
+// ...then re-derive the Merkle proof on-chain and emit an `audit_trail` event.
+```
 
-### On-chain transaction evidence
+### On-chain evidence (full end-to-end flow, Testnet)
 
-All hashes below are real, verified transactions on Stellar Testnet (each decoded to confirm the invoked function and return value):
+Every transaction below is a real, successful Testnet transaction executed against the contracts above.
 
-| Step | Function | Returned | Transaction |
-| --- | --- | --- | --- |
-| 1 | `issue_attestation` | attestation id `1` | [`593539ef…86a77`](https://stellar.expert/explorer/testnet/tx/593539ef8cedb38a25d037edb5463a743371447a71dc6018c2f4d46544186a77) |
-| 2 | `store_credential` (2 inter-contract calls into Registry) | credential id `1` | [`5d89488f…89624`](https://stellar.expert/explorer/testnet/tx/5d89488fa944fb31c1b29dade207b2554c22c07f18a2639cf7e129ef35e89624) |
-| 3 | `request_proof` | request id `1` | [`7eb0595e…2ae4d`](https://stellar.expert/explorer/testnet/tx/7eb0595ee3ef190c2de11dafb3b858c334509cb25f177869db9b2ae4c6f2ae4d) |
-| 4 | `grant_access` | — | [`d3b6fd78…b376f`](https://stellar.expert/explorer/testnet/tx/d3b6fd78d893e095019a2603eb6aecd6c6e13598e647aeddbb3fd463fb5b376f) |
-| 5 | `verify_disclosure` (2-hop inter-contract chain) | **`true`** | [`c50b8b82…0cfb7`](https://stellar.expert/explorer/testnet/tx/c50b8b823f50dc40e97d3b5a2fbf87d6b18859bd12bc2759d1769e36da50cfb7) |
+| # | Call | Contract | Cross-contract? | Transaction |
+| --- | --- | --- | --- | --- |
+| 1 | `setup_registry` | Registry | — | [`6f9a7cdb…`](https://stellar.expert/explorer/testnet/tx/6f9a7cdbb3b4a092174e19d293310e6c3315f9c022cd1ff363b3e8a4474369c4) |
+| 2 | `setup_vault` | Vault | — | [`b4c68226…`](https://stellar.expert/explorer/testnet/tx/b4c68226f3f94d6aa6c0a176313071a95dea8c046d32c63f7d7808b594e759c2) |
+| 3 | `setup_gate` | Gate | — | [`fe5b7e49…`](https://stellar.expert/explorer/testnet/tx/fe5b7e49f92540d42ced94b641b3ff4a0b8f4307e81253ce0b4c316d99d4997d) |
+| 4 | `authorize_endorser` | Registry | — | [`16b6904e…`](https://stellar.expert/explorer/testnet/tx/16b6904ebf85e7dd0ba4c07cd41854a4572bfbe707bc11f65946e284066ea364) |
+| 5 | `register_vouch` | Registry | — | [`aeedd15b…`](https://stellar.expert/explorer/testnet/tx/aeedd15be42db0d4eedf9b3e1c1cb10bca6b4284eb97c546abbbe2acaf36fe8d) |
+| 6 | **`lock_credential`** | Vault → Registry | ✅ **2 calls** | [`3d1f26ea…`](https://stellar.expert/explorer/testnet/tx/3d1f26ea1ee6f336ef319ba382de0e46ffd2924edd5eb15e160fe154255956fd) |
+| 7 | `create_proof_request` | Gate | — | [`52be82b4…`](https://stellar.expert/explorer/testnet/tx/52be82b41aab01e6509f137f699cbd7733a52b2cae1371f447537cfb4ac302db) |
+| 8 | **`authenticate_proof`** | Gate → Vault → Registry | ✅ **2-hop + event** | [`4f185745…`](https://stellar.expert/explorer/testnet/tx/4f185745a3c82d8ba5d325207030da6c615ef47649120a7bee482327b5766429) |
 
-Transaction 5 also emitted two on-chain `disclosure` contract events (one per verified field: `full_name`, `date_of_birth`) with topics `("disclosure", request_id, verifier, field_name)` — the same events the frontend's live ticker polls for.
-
-### Selective disclosure (Merkle commitments, in plain terms)
-
-When a credential is issued, each field is committed as a salted leaf hash — `leaf = sha256(field_name || raw_value || salt)` — and the leaves are combined pairwise into a single **Merkle root**, which is the only thing stored on-chain. To prove one field without revealing the others, the subject discloses just that field's value, its salt, and the sibling hashes along its path. The contract:
-
-1. Re-computes the leaf hash from the disclosed name, value, and salt.
-2. Walks the sibling proof upward, hashing sorted pairs, to reconstruct a root.
-3. Compares it to the true root from the `AttestationRegistry`. Any tampered value, wrong salt, or wrong sibling produces a different root and the contract returns `false`.
-
-The undisclosed fields remain hidden: their leaves are salted hashes, so nothing about their contents can be recovered from the proof.
-
----
+Transaction **8** returned `true` (proof verified) and emitted one `audit_trail` contract event, confirmed via the Soroban RPC `getEvents` method at its ledger.
 
 ## Wallet Connection
 
-The frontend integrates **Freighter** through `@creit.tech/stellar-wallets-kit`:
+- Multi-wallet selection via `@creit.tech/stellar-wallets-kit`, with prominent **Connect / Disconnect** controls and a live connectivity indicator.
+- Native XLM balance is fetched from Horizon and shown in the header.
+- On connect, the user signs a challenge message; the signature is hashed (SHA-256) into an AES-GCM key used to encrypt/decrypt the local credential locker. The signature/key never leaves the browser.
+- **Issuer authorization is deliberately not performed in the frontend.** `VouchRegistry.authorize_endorser` requires the registry admin's signature, and a static frontend cannot hold an admin key securely. Authorization is an off-app admin action (see [Setup Instructions](#setup-instructions)); an unauthorized wallet attempting to issue receives a clear, actionable error.
 
-- **Connect** opens the kit's auth modal; availability is detected via the Freighter module's `isAvailable()` (not a brittle `window` global check).
-- **Network enforcement:** after connecting, the app reads the wallet's active network and refuses non-Testnet with a "Wrong Network" dialog, since the contracts only exist on Testnet. All signing calls pin `networkPassphrase` to Testnet.
-- **Disconnect** clears the session, balances, and the in-memory encryption key.
-- On connect, the app requests a message signature and derives the local AES-GCM vault key from it — the key never leaves the browser and is never stored.
+## Core Mechanics — Selective Disclosure (Merkle)
 
----
-
-## Core Mechanics
-
-- **Issuance:** the subject's browser generates three random 32-byte salts, computes the salted leaf hashes and Merkle root locally, submits `issue_attestation` (root on-chain) and `store_credential` (metadata on-chain), and stores the encrypted plaintext + salts in IndexedDB keyed by the on-chain credential id.
-- **Access requests:** a verifier submits `request_proof` naming the subject, credential id, and requested fields. The subject sees the pending request and can `grant_access` with an expiry (1 hour in the UI).
-- **Verification:** the verifier assembles the disclosed fields + proofs (shared off-chain) and calls `verify_disclosure`, which runs the two-hop inter-contract chain and the Merkle math on-chain. Expired or revoked grants return `false` before any proof is checked.
-- **Live ticker:** contracts emit `disclosure` events (`#[contractevent]`); the frontend polls Soroban RPC `getEvents` every 5 seconds and prepends new disclosures to the "Live Disclosure Ticker" without a page reload. Events land on-chain when `verify_disclosure` is executed as a submitted transaction (as in evidence tx 5 above); the in-app verifier check runs as a free simulation, so it does not itself write events.
-
----
+- **Leaf:** `sha256( xdr(Symbol name) ‖ raw_value_bytes ‖ 32-byte_salt )` — the salt hides the value (a hiding commitment).
+- **Parent:** `sha256( sorted(left, right) )` — sorted-pair hashing so proofs are order-independent.
+- **Root** is stored on-chain in the `VouchRecord` at issuance.
+- **Disclosure:** the subject reveals `{ name, value, salt, sibling proof }` for chosen fields; `authenticate_proof` re-derives the leaf and walks the proof to the root, comparing against the registry's committed root. The identical math is implemented in `frontend/src/core/handlers/sentry-client.ts` and unit-tested against the contract logic in both Rust and Jest.
 
 ## Error Handling
 
-Distinct, user-facing error dialogs (not console-only) are implemented in [frontend/src/components/ClientHome.tsx](frontend/src/components/ClientHome.tsx):
+Handled, user-facing states (see `frontend/src/modules/wallet/WalletKitProvider.tsx` and `GateConsole.tsx`):
 
-1. **Freighter Wallet Missing** — no compatible wallet detected (checked live on every connect attempt).
-2. **Wrong Network** — wallet connected but not on Testnet; the app disconnects and instructs the user to switch.
-3. **Signature Request Rejected** — the user declined a Freighter signing prompt; the action aborts safely.
-4. **Insufficient XLM Balance** — balance below the fee threshold, with the funded-address hint.
-5. **Blockchain RPC Error** — network/simulation failures surface the actual contract diagnostic message.
+1. **Wallet not found** — no compatible Stellar wallet extension detected.
+2. **Signature rejected** — user declines the signing challenge (`type: 'rejected'`).
+3. **Insufficient balance** — connected account below the fee threshold (`type: 'insufficient_fee'`).
+4. **Wrong network** — Freighter not on Testnet.
+5. **Not an authorized issuer** — actionable message pointing to the admin authorization step.
 
-**Loading states:** every multi-step flow shows a step-by-step progress overlay while transactions are being built, signed, and confirmed (e.g. "Step 4/4: Submitting issue_attestation and store_credential…"), and transaction polling treats `NOT_FOUND` as still-pending rather than failing early.
+Transaction submission shows explicit **Pending → Success/Failure** loading states (`setLoadingText`) during simulation, signing, and RPC polling.
 
----
+## Real-Time Updates
+
+When `authenticate_proof` succeeds it publishes an `audit_trail` event. The dashboard polls Soroban RPC `getEvents` every 5 seconds (`getContractEvents` / `getLatestLedger` in `sentry-client.ts`) and appends new events to the live "Disclosure Ticker" without a page reload.
 
 ## Screenshots
 
-| Evidence | File |
-| --- | --- |
-| Wallet connected + stored credential list (live app, real account) | ![Wallet connected with credentials](media/desktop-view.png) |
-| Desktop interface (live deployment) | ![Desktop live view](media/desktop-live.png) |
-| Mobile view — real device (iPhone) on the live URL | ![Mobile on-device](media/mobile-view.PNG) |
-| Mobile view — 375px viewport (no horizontal overflow) | ![Mobile 375px](media/mobile-375.png) |
-| Error handling — wallet-missing dialog (live URL) | ![Wallet missing error](media/error-wallet-missing.png) |
-| CI/CD — all three checks green on `main` | ![CI checks passed](media/cicdrunnin.png) |
-| CI test output — 36 contract tests passing in Actions | ![CI test logs](media/test.png) |
+> Note: the images below were captured from an earlier build still branded **"VouchSafe"**; the underlying flows are unchanged. Regenerating them against the current VouchSafe build is a [pending](#known-gaps--pending-items) manual task.
 
----
+| View | Image |
+| --- | --- |
+| Mobile responsive (375px) | [media/mobile-375.png](media/mobile-375.png) |
+| Desktop | [media/desktop-live.png](media/desktop-live.png) |
+| Wallet-missing error | [media/error-wallet-missing.png](media/error-wallet-missing.png) |
+| GitHub Actions — green CI | [media/cicdrunnin.png](media/cicdrunnin.png) |
+| `cargo test` output | [media/test.png](media/test.png) |
 
 ## Setup Instructions
 
-### Prerequisites
-
-- **Rust & Cargo** via `rustup`, with the WASM target: `rustup target add wasm32v1-none`
-- **Stellar CLI** (for deploying) configured for Testnet
-- **Node.js 22** and npm
+Prerequisites: `rustup` with the `wasm32v1-none` target, `stellar-cli`, Node 18+.
 
 ### Contracts
 
 ```bash
-# from the repo root
-cargo test --workspace                                    # run all 36 unit tests
-cargo build --workspace --target wasm32v1-none --release  # build WASM binaries
+# Unit tests across all three contracts
+cargo test --workspace
+
+# Build production WASM
+stellar contract build   # or: cargo build --workspace --target wasm32v1-none --release
+```
+
+Deploy + wire (order matters):
+
+```bash
+REG=$(stellar contract deploy   --wasm target/wasm32v1-none/release/vouch_registry.wasm --source <admin> --network testnet)
+VAULT=$(stellar contract deploy --wasm target/wasm32v1-none/release/vouch_vault.wasm    --source <admin> --network testnet)
+GATE=$(stellar contract deploy  --wasm target/wasm32v1-none/release/vouch_gate.wasm     --source <admin> --network testnet)
+
+stellar contract invoke --id $REG   --source <admin> --network testnet -- setup_registry --admin <admin_addr>
+stellar contract invoke --id $VAULT --source <admin> --network testnet -- setup_vault    --attestation_registry $REG
+stellar contract invoke --id $GATE  --source <admin> --network testnet -- setup_gate      --credential_vault $VAULT
+
+# Authorize an issuer (admin-only, off-app):
+stellar contract invoke --id $REG --source <admin> --network testnet -- authorize_endorser --endorser <issuer_addr> --name Government
 ```
 
 ### Frontend
 
 ```bash
 cd frontend
-npm ci                 # reproducible install from the lockfile
-npm run dev            # http://localhost:3000
+npm install --legacy-peer-deps
+npm run dev        # local dev server
+npm run test       # Jest unit tests (crypto/Merkle utilities)
+npm run build      # static export -> frontend/out
 ```
 
-The deployed Testnet contract IDs are baked in as defaults; a `.env` file is only needed to override them:
-
-```env
-NEXT_PUBLIC_REGISTRY_ID=CDPHPDGZTO35WUEZSY6MO6EYNE4J323NANZRAIZIFGKEDGEIR6BAQEG3
-NEXT_PUBLIC_VAULT_ID=CB7LCLRBAVDKEUU727CFYXO7WQNHHHGRW4UXXFFYZXPYUVK3VXXDBZY3
-NEXT_PUBLIC_ACCESS_ID=CDY2F43CTJZ5T74CXZHRNTDZZWI62GK5BWV3VMV2ADHLR74SQ73RX3XT
-```
-
-> **Security note (testnet demo only):** the frontend ships a hardcoded *testnet* secret key used solely to auto-register the connected wallet as a demo issuer (`registerUserAsIssuer`). This account holds only free Friendbot XLM and administers only these demo contracts. This pattern is intentionally documented and must never be used with real funds or on mainnet.
-
----
+Contract IDs can be overridden via `NEXT_PUBLIC_REGISTRY_ID`, `NEXT_PUBLIC_VAULT_ID`, `NEXT_PUBLIC_ACCESS_ID`; sensible Testnet defaults are baked in.
 
 ## Testing
 
-**Contracts — 36 tests, all passing** (`cargo test --workspace`): happy paths, `should_panic` input rejection, expiry/revocation via ledger time manipulation, `env.auths()`-based authorization checks, double-initialization guards, sequential id assignment, and cross-contract verification through real `env.invoke_contract` calls in the test environment.
+- **Contracts:** `cargo test --workspace` — 36 passing tests (VouchGate 13, VouchRegistry 12, VouchVault 11) covering auth guards, init guards, sequential IDs, revocation, and selective-disclosure success/tamper/expiry cases.
+- **Frontend:** `npm run test` (in `frontend/`) — 9 passing Jest tests covering the SHA-256/Merkle commitment math and proof round-trip that the contract re-verifies.
 
-```
-running 13 tests  (access-control)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+## Known Gaps / Pending Items
 
-running 12 tests  (attestation-registry)
-test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
-
-running 11 tests  (credential-vault)
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
-```
-
-**Frontend — 9 jest tests, all passing** (`cd frontend && npm test`): the client-side Merkle commitment math that must stay in lockstep with the contract (sha256 vectors, salted-leaf hiding, sorted-pair parents, full sibling-proof root reconstruction, and tamper/wrong-salt rejection).
-
-```
-Test Suites: 2 passed, 2 total
-Tests:       9 passed, 9 total
-```
-
-CI runs both suites on every push (see badge above), plus `cargo fmt --check`, `clippy -D warnings`, the WASM build, ESLint, `tsc --noEmit`, and the static export build.
-
----
-
-## Live Demo
-
-**https://vouchsafe.armed-flop-danger.workers.dev** — static export served from Cloudflare Workers, wired to the Testnet contracts above. Use Freighter set to **Test Net** with a Friendbot-funded account.
-
----
-
-## Demo Video (1–2 min)
-
-A walkthrough of VouchSafe demonstrating wallet connection, credential issuance, selective disclosure authorization, and the verifier check:
-
-<video src="media/video.mp4" controls width="100%"></video>
-
-*If the video player does not load in your Markdown viewer:* 👉 **[Watch the E2E demo video (MP4)](media/video.mp4)**
-
----
+- **Live demo redeploy (pending):** the deployed URL currently serves the older "VouchSafe" build with previous contract IDs. Committing and pushing this branch triggers a fresh Cloudflare build that will serve VouchSafe against the contracts documented here.
+- **Screenshots / demo video (pending, manual):** current media assets show the previous "VouchSafe" branding and must be re-captured/re-recorded from the current build.
+- **Committed-key remediation:** an earlier admin secret was previously committed in `frontend/src/lib/soroban.ts` and has been removed from the working tree. It must be treated as **compromised/public**; see the audit note in the PR/commit for git-history remediation.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+</content>
+</invoke>

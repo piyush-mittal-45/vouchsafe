@@ -2,10 +2,10 @@
 
 import dynamic from 'next/dynamic';
 
-const ClientHome = dynamic(() => import('../components/ClientHome'), {
+const PortalDashboard = dynamic(() => import('../modules/dashboard/PortalDashboard'), {
   ssr: false,
 });
 
 export default function Home() {
-  return <ClientHome />;
+  return <PortalDashboard />;
 }

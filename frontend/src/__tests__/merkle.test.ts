@@ -1,4 +1,4 @@
-import { computeLeaf, computeParent, sha256 } from '../lib/soroban';
+import { computeLeaf, computeParent, sha256 } from '../core/handlers/sentry-client';
 import { Buffer } from 'buffer';
 
 // Mock the Stellar SDK to prevent loading deep ES Module dependencies during tests
@@ -15,7 +15,7 @@ jest.mock('@stellar/stellar-sdk', () => {
 });
 
 // These tests exercise the Merkle commitment math the issuance flow builds and
-// the AccessControl contract re-verifies: hiding commitments (salted leaves),
+// the VouchGate contract re-verifies: hiding commitments (salted leaves),
 // sorted-pair parent hashing, and sibling-proof root reconstruction. If this
 // drifts from the contract logic, selective disclosure proofs stop verifying.
 

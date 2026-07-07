@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
-import { Inter, Cinzel } from "next/font/google";
+import { Outfit, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const outfit = Outfit({
   subsets: ["latin"],
   variable: "--font-sans",
 });
 
-const cinzel = Cinzel({
+const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-serif",
+  variable: "--font-mono",
 });
 
 export const metadata: Metadata = {
-  title: "VouchSafe | Decentralized Identity Vault",
+  title: "VouchSafe | Cryptographic Credentials & Verification Shield",
   description: "A decentralized self-sovereign identity credential vault built on Soroban with selective disclosure proofs.",
 };
 
@@ -23,8 +23,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${cinzel.variable}`}>
-      <body className="antialiased bg-[#FDFBF7] text-[#0F172A]">
+    <html lang="en" className={`${outfit.variable} ${jetbrainsMono.variable}`}>
+      <body className="antialiased bg-[#07080a] text-slate-100 font-mono">
         {children}
       </body>
     </html>

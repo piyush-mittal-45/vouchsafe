@@ -1,4 +1,4 @@
-import { sha256, computeLeaf, computeParent } from '../lib/soroban';
+import { sha256, computeLeaf, computeParent } from '../core/handlers/sentry-client';
 import { Buffer } from 'buffer';
 
 // Mock the Stellar SDK to prevent loading deep ES Module dependencies during tests
@@ -14,7 +14,7 @@ jest.mock('@stellar/stellar-sdk', () => {
   };
 });
 
-describe('Soroban Frontend Cryptographic Utilities', () => {
+describe('VouchSafe Frontend Cryptographic Utilities', () => {
   test('sha256 hashes correctly', () => {
     const input = Buffer.from('hello', 'utf8');
     const hash = sha256(input);

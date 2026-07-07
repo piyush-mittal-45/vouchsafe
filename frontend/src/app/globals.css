@@ -2,12 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: var(--font-sans), sans-serif;
-  background-color: #FDFBF7;
-  color: #0F172A;
+@layer base {
+  body {
+    background-color: #07080a;
+    color: #e2e8f0;
+  }
 }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-serif), serif;
+/* Cyberpunk design utilities */
+.cyber-glow {
+  box-shadow: 0 0 10px rgba(0, 255, 102, 0.15), 0 0 2px rgba(0, 255, 102, 0.3);
+}
+
+.cyber-glow-heavy {
+  box-shadow: 0 0 20px rgba(0, 255, 102, 0.3), 0 0 5px rgba(0, 255, 102, 0.6);
+}
+
+.cyber-border {
+  border: 1px solid rgba(0, 255, 102, 0.2);
+}
+
+.cyber-border-active {
+  border-color: rgba(0, 255, 102, 0.7);
+}
+
+.cyber-text-glow {
+  text-shadow: 0 0 8px rgba(0, 255, 102, 0.5);
+}
+
+.cyber-grid {
+  background-size: 30px 30px;
+  background-image: 
+    linear-gradient(to right, rgba(0, 255, 102, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 255, 102, 0.02) 1px, transparent 1px);
+}
+
+/* Ticking animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s infinite ease-in-out;
 }
