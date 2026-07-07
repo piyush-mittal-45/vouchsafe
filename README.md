@@ -7,7 +7,8 @@
 
 **Live Demo:** https://vouchsafe.botch-colt-sizably.workers.dev/
 
-**Demo Video (1–2 min):** [media/video.mp4](media/video.mp4)
+**Demo Video (1–2 min):**
+![VouchSafe Demo Video](media/video.gif)
 
 ---
 
@@ -135,14 +136,10 @@ When `authenticate_proof` succeeds it publishes an `audit_trail` event. The dash
 
 ## Screenshots
 
-
 | View | Image |
 | --- | --- |
-| Mobile responsive (375px) | [media/mobile-375.png](media/mobile-375.png) |
-| Desktop | [media/desktop-live.png](media/desktop-live.png) |
-| Wallet-missing error | [media/error-wallet-missing.png](media/error-wallet-missing.png) |
-| GitHub Actions — green CI | [media/cicdrunnin.png](media/cicdrunnin.png) |
-| `cargo test` output | [media/test.png](media/test.png) |
+| Mobile responsive (375px) | ![Mobile responsive (375px)](media/mobile-375.png) |
+| Desktop | ![Desktop view](media/desktop-view.png) |
 
 ## Setup Instructions
 

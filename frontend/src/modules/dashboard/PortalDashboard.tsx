@@ -92,15 +92,15 @@ function DashboardContent() {
   }, [publicKey, encryptionKey]);
 
   return (
-    <main className="min-h-screen bg-[#07080a] py-6 px-4 sm:py-12 sm:px-6 flex flex-col items-center cyber-grid">
+    <main className="min-h-screen w-full overflow-x-hidden bg-[#07080a] py-6 px-4 sm:py-12 sm:px-6 flex flex-col items-center cyber-grid">
       <div className="w-full max-w-5xl border border-[#00ff66]/20 bg-[#090b0e]/90 p-4 sm:p-6 md:p-8 shadow-2xl relative cyber-glow">
-        
+
         {/* Top HUD Branding */}
-        <header className="border-b border-[#00ff66]/15 pb-6 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end space-y-4 md:space-y-0">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="w-2.5 h-2.5 bg-[#00ff66] inline-block cyber-glow"></span>
-              <h1 className="text-xl sm:text-2xl font-bold tracking-widest text-[#00ff66] cyber-text-glow">
+        <header className="border-b border-[#00ff66]/15 pb-6 mb-8 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 md:gap-0">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 shrink-0 bg-[#00ff66] inline-block cyber-glow"></span>
+              <h1 className="min-w-0 break-words text-lg sm:text-2xl font-bold tracking-wider sm:tracking-widest text-[#00ff66] cyber-text-glow">
                 VOUCHSAFE // SYSTEM ACTIVE
               </h1>
             </div>
@@ -139,7 +139,7 @@ function DashboardContent() {
 
         {/* Workspace Body */}
         {!publicKey ? (
-          <div className="border border-slate-900 bg-black/30 p-12 text-center space-y-4">
+          <div className="border border-slate-900 bg-black/30 p-6 sm:p-12 text-center space-y-4">
             <div className="text-slate-500 text-xs tracking-wider">
               CONNECT WALLET TO INTERACT WITH THE SECURE SYSTEM COMPONENT
             </div>
@@ -148,7 +148,7 @@ function DashboardContent() {
             </p>
           </div>
         ) : !encryptionKey ? (
-          <div className="border border-[#00ff66]/10 bg-black/20 p-12 text-center space-y-4">
+          <div className="border border-[#00ff66]/10 bg-black/20 p-6 sm:p-12 text-center space-y-4">
             <div className="text-yellow-600 text-xs tracking-wider uppercase animate-pulse">
               Vault Access Signature Requested
             </div>
