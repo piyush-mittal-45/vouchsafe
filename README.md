@@ -5,7 +5,7 @@
 [![Soroban](https://img.shields.io/badge/Soroban-Rust-orange?logo=rust&logoColor=white)](https://soroban.stellar.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
 
-**Live Demo:** https://vouchsafe.armed-flop-danger.workers.dev
+**Live Demo:** https://vouchsafe.botch-colt-sizably.workers.dev/
 
 **Demo Video (1–2 min):** [media/video.mp4](media/video.mp4)
 
