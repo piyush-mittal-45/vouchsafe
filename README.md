@@ -140,6 +140,7 @@ When `authenticate_proof` succeeds it publishes an `audit_trail` event. The dash
 | --- | --- |
 | Mobile responsive (375px) | ![Mobile responsive (375px)](media/mobile-375.png) |
 | Desktop | ![Desktop view](media/desktop-view.png) |
+| `cargo test` output | ![cargo test output](media/test.png) |
 
 ## Setup Instructions
 
