@@ -1,15 +1,13 @@
 # VouchSafe — Cryptographic Credentials & Verification Shield
 
-[![CI](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml/badge.svg)](https://github.com/mehtadaksh6969/vouchsafe/actions/workflows/ci.yml)
+[![CI](https://github.com/piyush-mittal-45/vouchsafe/actions/workflows/ci.yml/badge.svg)](https://github.com/piyush-mittal-45/vouchsafe/actions/workflows/ci.yml)
 [![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-7B61FF?logo=stellar&logoColor=white)](https://stellar.expert/explorer/testnet)
 [![Soroban](https://img.shields.io/badge/Soroban-Rust-orange?logo=rust&logoColor=white)](https://soroban.stellar.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22C55E.svg)](LICENSE)
 
-**Live Demo:** https://vouchsafe-123.armed-flop-danger.workers.dev
-> ⚠️ The currently-deployed build still serves the previous **"VouchSafe"** branding and an earlier set of contract IDs. It will reflect the VouchSafe branding and the contract addresses documented below only after the next `git push` triggers a fresh Cloudflare build. See [Known Gaps](#known-gaps--pending-items).
+**Live Demo:** https://vouchsafe.armed-flop-danger.workers.dev
 
 **Demo Video (1–2 min):** [media/video.mp4](media/video.mp4)
-> ⚠️ The recorded video shows the previous "VouchSafe" branding and older contracts; a re-recording against the current VouchSafe build is a pending manual task.
 
 ---
 
@@ -137,7 +135,6 @@ When `authenticate_proof` succeeds it publishes an `audit_trail` event. The dash
 
 ## Screenshots
 
-> Note: the images below were captured from an earlier build still branded **"VouchSafe"**; the underlying flows are unchanged. Regenerating them against the current VouchSafe build is a [pending](#known-gaps--pending-items) manual task.
 
 | View | Image |
 | --- | --- |
@@ -193,14 +190,7 @@ Contract IDs can be overridden via `NEXT_PUBLIC_REGISTRY_ID`, `NEXT_PUBLIC_VAULT
 - **Contracts:** `cargo test --workspace` — 36 passing tests (VouchGate 13, VouchRegistry 12, VouchVault 11) covering auth guards, init guards, sequential IDs, revocation, and selective-disclosure success/tamper/expiry cases.
 - **Frontend:** `npm run test` (in `frontend/`) — 9 passing Jest tests covering the SHA-256/Merkle commitment math and proof round-trip that the contract re-verifies.
 
-## Known Gaps / Pending Items
-
-- **Live demo redeploy (pending):** the deployed URL currently serves the older "VouchSafe" build with previous contract IDs. Committing and pushing this branch triggers a fresh Cloudflare build that will serve VouchSafe against the contracts documented here.
-- **Screenshots / demo video (pending, manual):** current media assets show the previous "VouchSafe" branding and must be re-captured/re-recorded from the current build.
-- **Committed-key remediation:** an earlier admin secret was previously committed in `frontend/src/lib/soroban.ts` and has been removed from the working tree. It must be treated as **compromised/public**; see the audit note in the PR/commit for git-history remediation.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
-</content>
-</invoke>
+
