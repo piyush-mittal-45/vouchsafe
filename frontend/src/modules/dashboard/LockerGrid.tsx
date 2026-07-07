@@ -97,7 +97,7 @@ export function LockerGrid({ credentials, onRefresh, loadCredentials }: LockerGr
     <div className="space-y-4">
       <div className="flex items-center justify-between border-b border-emerald-950 pb-2">
         <h2 className="text-sm font-bold tracking-widest text-[#00ff66] cyber-text-glow">
-          // SECURE VAULT LOCKER
+          {"// SECURE VAULT LOCKER"}
         </h2>
         <button 
           onClick={onRefresh}
@@ -182,7 +182,7 @@ export function LockerGrid({ credentials, onRefresh, loadCredentials }: LockerGr
                     {dec ? (
                       <div className="mt-2 p-2 bg-[#090b0e] border border-slate-900 space-y-1">
                         <div className="text-[#00ff66] text-[10px] tracking-wider mb-1">
-                          // DECRYPTED LOCAL PAYLOAD
+                          {"// DECRYPTED LOCAL PAYLOAD"}
                         </div>
                         <div>
                           <span className="text-slate-500">Full Name:</span>{' '}

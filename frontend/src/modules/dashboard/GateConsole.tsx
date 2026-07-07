@@ -594,13 +594,13 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
       {/* Visual Ticking Centerpiece */}
       <div className="cyber-border bg-[#0a0c10] p-4 flex items-center justify-between">
         <div>
-          <div className="text-[10px] text-slate-500 uppercase tracking-widest">// AUDITED FIELDS COUNT</div>
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest">{"// AUDITED FIELDS COUNT"}</div>
           <div className="text-2xl font-mono text-[#00ff66] font-bold tracking-wider cyber-text-glow">
             {validatedCount.toString().padStart(6, '0')}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] text-slate-500 uppercase tracking-widest">// STATUS INTEGRITY</div>
+          <div className="text-[10px] text-slate-500 uppercase tracking-widest">{"// STATUS INTEGRITY"}</div>
           <div className="text-[11px] text-emerald-400 font-bold flex items-center space-x-1 justify-end">
             <span className="w-1.5 h-1.5 bg-[#00ff66] rounded-full inline-block animate-pulse-glow"></span>
             <span>SECURED</span>
@@ -655,7 +655,7 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
       {/* Tab Panels */}
       {consoleTab === 'issue' && (
         <div className="cyber-border p-4 bg-slate-950/50 space-y-3">
-          <div className="text-xs font-bold text-slate-300">// MINT SECURE CREDENTIAL</div>
+          <div className="text-xs font-bold text-slate-300">{"// MINT SECURE CREDENTIAL"}</div>
           
           <div className="space-y-2">
             <div>
@@ -698,7 +698,7 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
 
       {consoleTab === 'subject' && (
         <div className="cyber-border p-4 bg-slate-950/50 space-y-4">
-          <div className="text-xs font-bold text-slate-300">// DISCLOSURE PERMISSION REQUESTS</div>
+          <div className="text-xs font-bold text-slate-300">{"// DISCLOSURE PERMISSION REQUESTS"}</div>
           
           {pendingRequests.length === 0 ? (
             <div className="text-xs text-slate-500 text-center py-4">
@@ -749,7 +749,7 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
         <div className="space-y-4">
           {/* Create Request */}
           <div className="cyber-border p-4 bg-slate-950/50 space-y-3">
-            <div className="text-xs font-bold text-slate-300">// CREATE DISCLOSURE REQUEST</div>
+            <div className="text-xs font-bold text-slate-300">{"// CREATE DISCLOSURE REQUEST"}</div>
             <div className="space-y-2">
               <div>
                 <label className="block text-[10px] text-slate-500 uppercase">Subject Wallet Address</label>
@@ -799,7 +799,7 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
 
           {/* Verification execution / sent requests */}
           <div className="cyber-border p-4 bg-slate-950/50 space-y-3">
-            <div className="text-xs font-bold text-slate-300">// SENT AUDIT TICKETS</div>
+            <div className="text-xs font-bold text-slate-300">{"// SENT AUDIT TICKETS"}</div>
             
             {sentRequests.length === 0 ? (
               <div className="text-xs text-slate-500 text-center py-4">No audit requests initiated yet.</div>
@@ -871,7 +871,7 @@ export function GateConsole({ loadCredentials }: { loadCredentials: () => Promis
 
       {consoleTab === 'audits' && (
         <div className="cyber-border p-4 bg-slate-950/50 space-y-3">
-          <div className="text-xs font-bold text-slate-300">// REAL-TIME DECENTRALIZED AUDIT FEED</div>
+          <div className="text-xs font-bold text-slate-300">{"// REAL-TIME DECENTRALIZED AUDIT FEED"}</div>
           
           <div className="p-3 bg-black border border-slate-950 font-mono text-[10px] h-60 overflow-y-auto space-y-2 text-[#00ff66]">
             {activityFeed.length === 0 ? (

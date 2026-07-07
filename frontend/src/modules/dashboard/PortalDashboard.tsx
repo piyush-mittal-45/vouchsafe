@@ -119,7 +119,7 @@ function DashboardContent() {
               </button>
             ) : (
               <div className="flex flex-col items-start md:items-end w-full space-y-1">
-                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">// SECURED TERMINAL</span>
+                <span className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{"// SECURED TERMINAL"}</span>
                 <span className="text-xs font-mono text-[#00ff66] break-all bg-black/40 border border-slate-900 px-2 py-0.5 max-w-xs md:max-w-md">
                   {publicKey}
                 </span>
@@ -191,7 +191,7 @@ function DashboardContent() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="cyber-border bg-[#090b0e] p-6 max-w-sm w-full text-center space-y-4 shadow-2xl">
             <div className="w-8 h-8 border-2 border-t-transparent border-[#00ff66] rounded-full animate-spin mx-auto"></div>
-            <div className="text-xs font-bold text-[#00ff66] tracking-wider">// PIPELINE OPERATION ACTIVE</div>
+            <div className="text-xs font-bold text-[#00ff66] tracking-wider">{"// PIPELINE OPERATION ACTIVE"}</div>
             <p className="text-[10px] text-slate-400 leading-relaxed font-mono">
               {loadingText}
             </p>
