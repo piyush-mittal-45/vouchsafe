@@ -176,7 +176,9 @@ impl VouchGate {
             .get(&key)
             .unwrap_or_else(|| panic!("request not found"));
 
-        if request.request_state != Symbol::new(&env, "approved") && request.request_state != Symbol::new(&env, "pending") {
+        if request.request_state != Symbol::new(&env, "approved")
+            && request.request_state != Symbol::new(&env, "pending")
+        {
             return false;
         }
 
